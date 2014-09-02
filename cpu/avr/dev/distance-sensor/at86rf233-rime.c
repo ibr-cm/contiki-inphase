@@ -51,11 +51,13 @@
 #include "at86rf233-network.h"
 #include "at86rf233.h"
 
+#include <stdio.h>
+
 #define AT86RF233_RIME_CHANNEL 142
 
 static void recv_uc(struct unicast_conn *c, const linkaddr_t *from)
 {
-  printf("unicast message received from %d.%d: '%s'\n", from->u8[0], from->u8[1], (char *) packetbuf_dataptr());
+  printf("DISTANCE: unicast message received from %d.%d: '%s'\n", from->u8[0], from->u8[1], (char *) packetbuf_dataptr());
   at86rf233_input(from, packetbuf_datalen(), packetbuf_dataptr());
 }
 static const struct unicast_callbacks unicast_callbacks = {recv_uc};

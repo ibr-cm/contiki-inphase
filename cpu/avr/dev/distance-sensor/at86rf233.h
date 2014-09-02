@@ -70,6 +70,9 @@
 
 #define RANGING_METHOD_PMU       0x01
 
+#define RANGE_ACCEPT_STATUS_SUCCESS 0x10
+#define RANGE_ACCEPT_STATUS_REJECT  0x12
+
 #define REJECT_REASON_NORF233    0x01 // node has no compatible radio
 #define REJECT_REASON_BUSY       0x02 // node is currently busy with other ranging request
 #define REJECT_REASON_NOTALLOWED 0x03 // node is blocking ranging due to data transmissions
@@ -77,11 +80,6 @@
 
 #define RESULT_TYPE_PMU          0x00
 #define RESULT_TYPE_RSSI         0x01
-
-typedef struct {
-	uint8_t frame_type;
-	void *content;
-} frame_range_basic_t;
 
 typedef struct {
 	uint8_t  ranging_method;
@@ -117,6 +115,18 @@ typedef struct {
 	void  *result_data;
 } frame_result_confirm_t;
 
+typedef union {
+	frame_range_request_t range_request;
+	frame_range_accept_t range_accept;
+	frame_result_request_t result_request;
+	frame_result_confirm_t result_confirm;
+} frame_subframe_t;
+
+typedef struct {
+	uint8_t frame_type;
+	frame_subframe_t content;
+} frame_range_basic_t;
+
 extern const struct at86rf233_network AT86RF233_NETWORK;
 
 uint8_t at86rf233_available(void);
@@ -125,9 +135,11 @@ uint8_t at86rf233_init(void);
 
 uint8_t at86rf233_deinit(void);
 
-uint8_t at86rf233_setupRanging(void);
+uint8_t at86rf233_startRanging(void);
 
 uint8_t at86rf233_setTarget(linkaddr_t* addr);
+
+void at86rf233_statemachine(uint8_t frame_type, frame_subframe_t *frame);
 
 /**
  * \brief coap_input
@@ -139,6 +151,10 @@ uint8_t at86rf233_setTarget(linkaddr_t* addr);
  * \param msg pointer to the message
  */
 void at86rf233_input(const linkaddr_t* src, uint16_t msg_len, void *msg);
+
+void at86rf233_pmuMagicInitiator();
+
+void at86rf233_pmuMagicReflector();
 
 #endif /* __AT86RF233_H__ */
 
