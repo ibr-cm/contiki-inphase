@@ -310,11 +310,12 @@ static void send_serial(void) {
     binary_end_frame();
 }
 
-static void send_range_request(frame_subframe_t *frame) {
+static void send_range_request(void) {
 	// send RANGE_REQUEST
 	frame_range_basic_t f;
 	f.frame_type = RANGE_REQUEST;
-	memcpy(&f.content.range_request, frame, sizeof(frame_range_request_t));
+	f.content.range_request.ranging_method = RANGING_METHOD_PMU;
+	f.content.range_request.capabilities = 0x00;
 	AT86RF233_NETWORK.send(settings.reflector, sizeof(frame_range_request_t)+1, &f);
 }
 
@@ -384,7 +385,7 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 			next_status_code = DISTANCE_NO_REFLECTOR;
 			ctimer_set(&timeout_timer, MEASUREMENT_TIMEOUT, reset_statemachine, NULL); // setup timeout_timer
 
-			send_range_request(frame);
+			send_range_request();
 
 			fsm_state = RANGING_REQUESTED;
 		}
@@ -1063,15 +1064,10 @@ PROCESS_THREAD(ranging_process, ev, data)
 	}
 
 	// start a range measurement
-	frame_subframe_t reqframe;
-
-	reqframe.range_request.ranging_method = RANGING_METHOD_PMU;
-	reqframe.range_request.capabilities = 0x00;
-
 	ctimer_stop(&timeout_timer);
 	fsm_state = IDLE; // hard reset the statemachine, maybe it is stuck in some timed out measurement
 
-	statemachine(RANGE_REQUEST_START, &reqframe);
+	statemachine(RANGE_REQUEST_START, NULL);
 
 	while (fsm_state != IDLE) {
 		// TODO: use event to avoid busy waiting
