@@ -468,6 +468,14 @@
 /** Offset for register RX_SYN */
 #define RG_RX_SYN                        (0x15)
 
+/** Access parameters for sub-register RX_PDT_DIS in register @ref RG_RX_SYN */
+#define SR_RX_PDT_DIS              0x15, 0x80, 7
+
+#define SR_reserved_15_1           0x15, 0x70, 4
+
+/** Access parameters for sub-register RX_PDT_LEVEL in register @ref RG_RX_SYN */
+#define SR_RX_PDT_LEVEL            0x15, 0x0f, 0
+
 /* ###########################################################################
  * # 0x16: TRX_RPC                                                           #
  * ###########################################################################
