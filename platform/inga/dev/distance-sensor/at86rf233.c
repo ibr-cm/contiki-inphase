@@ -557,6 +557,22 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 				fsm_state = IDLE; // no other results allowed, return to idle
 				status_code = DISTANCE_IDLE;
 			}
+		} else if (frame_type == RANGE_REQUEST) {
+			// allow new measurement, even when waiting for results to be transmitted
+			// maybe we lost the last "invalid" RESULT_REQUEST and the same initiator want to measure again
+			// we do the same as in the IDLE state
+
+			// check if ranging is allowed
+			if (!settings.allow_ranging) {
+				PRINTF("DISTANCE: ranging request ignored (ranging not allowed)\n");
+				fsm_state = IDLE;
+			} else {
+				status_code = DISTANCE_RUNNING;
+				send_range_accept();
+				retransmissions = RANGE_ACCEPT_RETRANSMISSIONS; // maximum allowed retransmissions
+				ctimer_set(&timeout_timer, MESSAGE_TIMEOUT, trigger_network_timeout, NULL);
+				fsm_state = RANGING_ACCEPTED;
+			}
 		} else {
 			// all other frames are invalid here
 		}
