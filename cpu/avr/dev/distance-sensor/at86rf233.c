@@ -471,9 +471,8 @@ void at86rf233_pmuMagicInitiator() {
 
 	wait_for_timer2(1);
 
-	uint8_t fb_data[128] = {0};					// setup a framebuffer with all zeroes
-	fb_data[0] = 0x7F;							// set frame length to 127 (maximum)
-	hal_frame_write(fb_data, 128);				// copy data to sram, framebuffer section
+	uint8_t fb_data[127] = {0};					// setup a framebuffer with all zeroes
+	hal_frame_write(fb_data, 127);				// copy data to sram, framebuffer section
 
 	// antenna diversity control is skipped, we only have one antenna
 
@@ -580,9 +579,8 @@ void at86rf233_pmuMagicReflector() {
 
 	wait_for_timer2(1);
 
-	uint8_t fb_data[128] = {0};					// setup a framebuffer with all zeroes
-	fb_data[0] = 0x7F;							// set frame length to 127 (maximum)
-	hal_frame_write(fb_data, 128);				// copy data to sram, framebuffer section
+	uint8_t fb_data[127] = {0};					// setup a framebuffer with all zeroes
+	hal_frame_write(fb_data, 127);				// copy data to sram, framebuffer section
 
 	// antenna diversity control is skipped, we only have one antenna
 
