@@ -356,6 +356,22 @@ static void send_result_confirm(uint16_t start_address, uint16_t result_length) 
 	AT86RF233_NETWORK.send(settings.initiator, result_length+5, &f);
 }
 
+static void active_reflector_subtract(uint16_t last_start, uint8_t *result_data, uint16_t result_length) {
+	uint16_t i;
+	for (i = 0; i < result_length; i++) {
+		// do basic calculations to save memory
+		int16_t v = local_pmu_values[i+last_start]-result_data[i];
+
+		if (v > 127) {
+			v -= 256;
+		} else if (v < -128) {
+			v += 256;
+		}
+		// overwrite data in local array
+		signed_local_pmu_values[i+last_start] = (int8_t) v;
+	}
+}
+
 static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 
 	PRINTF("DISTANCE: state: frame_type: %u, fsm_state: %u\n", frame_type, fsm_state);
@@ -427,25 +443,8 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 			// get last results from frame
 			uint16_t last_start = frame->result_confirm.result_start_address;
 			uint16_t result_length = frame->result_confirm.result_length;
-			uint16_t i;
-			for (i = 0; i < result_length; i++) {
-				// do basic calculations to save memory
-				int16_t v = local_pmu_values[i+last_start]-frame->result_confirm.result_data[i];
 
-				//v /= 2;	// active reflector measured phase twice
-
-
-				if (v > 127) {
-					v -= 256;
-				} else if (v < -128) {
-					v += 256;
-				}
-
-
-
-				// overwrite data in local array
-				signed_local_pmu_values[i+last_start] = (int8_t)v;
-			}
+			active_reflector_subtract(last_start, frame->result_confirm.result_data, result_length);
 
 			uint16_t next_start = last_start + result_length;
 
