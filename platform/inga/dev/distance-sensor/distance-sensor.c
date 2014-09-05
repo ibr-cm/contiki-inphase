@@ -67,7 +67,14 @@ status(int type)
     case SENSORS_ACTIVE:
       return initialized;
     case SENSORS_READY:
-      return at86rf233_get_status();
+      if (initialized == 0) {
+        // if the sensor is not initialized, this just returns if the AT86RF233 is available
+        return ready;
+      }
+      else {
+        // if the sensor is initialized, this returns status codes from the driver
+        return at86rf233_get_status();
+      }
   }
   return 0;
 }
