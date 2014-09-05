@@ -89,6 +89,7 @@
 #define PMU_LED_ON_WHILE_CALC		4	// enable LED during distance calculation
 #define PMU_LED_ON_WHILE_DIG2		8	// enable LED while waiting for DIG2 signal
 #define PMU_LED_ENABLE_ON_ERROR		16	// turn LED on on error, disable it on next measurement
+#define PMU_LED_ON_WHILE_PMU_READ	32	// turn LED on while the PMU values are read
 
 #define AT86RF233_ENTER_CRITICAL_REGION( ) {uint8_t volatile saved_sreg = SREG; cli( )
 #define AT86RF233_LEAVE_CRITICAL_REGION( ) SREG = saved_sreg;}
@@ -252,10 +253,10 @@ static void reset_statemachine() {
 	status_code = next_status_code;
 
 	// indicate errors
-	#if PMU_GREEN_LED == PMU_LED_ENABLE_ON_ERROR
+	#if PMU_GREEN_LED & PMU_LED_ENABLE_ON_ERROR
 		leds_on(LEDS_GREEN);
 	#endif
-	#if PMU_YELLOW_LED == PMU_LED_ENABLE_ON_ERROR
+	#if PMU_YELLOW_LED & PMU_LED_ENABLE_ON_ERROR
 		leds_on(LEDS_YELLOW);
 	#endif
 
@@ -275,6 +276,18 @@ static void send_serial(void) {
 
 	// send total amount of samples
 	binary_send_short(PMU_MEASUREMENTS);
+
+	// send calculated distance meter
+	binary_send_byte(dist_last_meter);
+
+	// send calculated distance centimeter
+	binary_send_byte(dist_last_centimeter);
+
+	// send last quality
+	binary_send_byte(dist_last_quality);
+
+	// send system status
+	binary_send_byte(status_code);
 
 	// transmit data
 	binary_send_data(&local_pmu_values, PMU_MEASUREMENTS);
@@ -395,9 +408,6 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 			if (next_start < PMU_MEASUREMENTS) {
 				fsm_state = RESULT_REQUESTED;
 			} else {
-				if (settings.raw_output) {
-					send_serial(); // all results gathered, send via serial port
-				}
 				fsm_state = IDLE;
 				ctimer_stop(&timeout_timer); // done, stop timer
 			}
@@ -740,6 +750,13 @@ static void receiver_pmu(uint8_t* pmu_values) {
 
 	_delay_us(50); // wait for sender to be ready
 
+	#if PMU_GREEN_LED & PMU_LED_ON_WHILE_PMU_READ
+		leds_on(LEDS_GREEN);
+	#endif
+	#if PMU_YELLOW_LED & PMU_LED_ON_WHILE_PMU_READ
+		leds_on(LEDS_YELLOW);
+	#endif
+
 	uint8_t i;
 	uint16_t accumulator = 0; // this hold all sampled pmu values
 	for (i = 0; i < PMU_SAMPLES; i++) {
@@ -747,6 +764,13 @@ static void receiver_pmu(uint8_t* pmu_values) {
 		//_delay_us(8); // value is updated every 8us but we are slower with reading the value anyway
 	}
 	pmu_values[0] = (accumulator>>PMU_SAMPLES_SHIFT); // divide by the number of samples
+
+	#if PMU_GREEN_LED & PMU_LED_ON_WHILE_PMU_READ
+		leds_off(LEDS_GREEN);
+	#endif
+	#if PMU_YELLOW_LED & PMU_LED_ON_WHILE_PMU_READ
+		leds_off(LEDS_YELLOW);
+	#endif
 }
 
 // unified version of pmu magic
@@ -1127,6 +1151,11 @@ PROCESS_THREAD(ranging_process, ev, data)
 		status_code = calc_status;
 	} else {
 		status_code = DISTANCE_IDLE;
+	}
+
+	// output result data if configured
+	if (settings.raw_output) {
+		send_serial(); // all results gathered, send via serial port
 	}
 
 	PROCESS_END();
