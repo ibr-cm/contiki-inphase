@@ -960,12 +960,18 @@ static int8_t pmu_magic(pmu_magic_role_t role, pmu_magic_mode_t mode) {
 
 	if (role == PMU_MAGIC_ROLE_REFLECTOR) {
 		_delay_us(9.5243);	// DIG2 signal is on average 9.5243 us delayed on the initiator, reflector waits
-		_delay_us(23.1557); // wait for the initiator to check if sync was valid
-		_delay_us(8.991);   // and wait some more...
 	}
 
+	start_timer2(7);		// timer counts to 7, we have 244us between synchronization points
+	//leds_off(2);
+
+	// now in sync with the other node
+
 	if (role == PMU_MAGIC_ROLE_INITIATOR) {
-		// check if we got the TIME_SYNC_REQUEST back
+		// check if the initiator got the TIME_SYNC_REQUEST back
+		// reflector cannot check if sync was correct, it will do the measurement anyway
+		// initiator can choose the next reflector and save time
+		// reflector will not disturb the next measurement of the reflector
 		uint8_t fb_data[5];
 		hal_sram_read(12, 5, fb_data);
 		uint8_t i;
@@ -998,10 +1004,8 @@ static int8_t pmu_magic(pmu_magic_role_t role, pmu_magic_mode_t mode) {
 			goto BAIL;
 		}
 	}
-	start_timer2(7);		// timer counts to 7, we have 244us between synchronization points
-	//leds_off(2);
 
-	// now in sync with the other node
+	wait_for_timer2(0);
 
 	switch (role) {
 	case PMU_MAGIC_ROLE_INITIATOR:		// initiator
