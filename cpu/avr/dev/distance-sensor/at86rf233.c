@@ -477,8 +477,8 @@ void at86rf233_pmuMagicInitiator() {
 	wait_for_timer2(2);
 
 	// measure RSSI
-	hal_subregister_write(SR_TRX_CMD, CMD_FORCE_PLL_ON);
-	hal_subregister_write(SR_TRX_CMD, CMD_RX_ON);
+	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
+	hal_register_write(RG_TRX_STATE, CMD_RX_ON);
 
 	_delay_us(200); // wait some time for sender to be ready...
 
@@ -487,15 +487,15 @@ void at86rf233_pmuMagicInitiator() {
 
 	wait_for_timer2(3);
 
-	hal_subregister_write(SR_TRX_CMD, CMD_FORCE_PLL_ON);
-	hal_subregister_write(SR_TRX_CMD, CMD_TX_START);
+	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
+	hal_register_write(RG_TRX_STATE, CMD_TX_START);
 
 	wait_for_timer2(4);
 
 	at86rf233_setFrequency(2500, 0);
 
-	hal_subregister_write(SR_TRX_CMD, CMD_FORCE_PLL_ON);
-	hal_subregister_write(SR_TRX_CMD, CMD_RX_ON);
+	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
+	hal_register_write(RG_TRX_STATE, CMD_RX_ON);
 
 	_delay_us(200); // wait for sender to be ready
 
@@ -583,13 +583,13 @@ void at86rf233_pmuMagicReflector() {
 	wait_for_timer2(2);
 
 	// measure RSSI
-	hal_subregister_write(SR_TRX_CMD, CMD_FORCE_PLL_ON);
-	hal_subregister_write(SR_TRX_CMD, CMD_TX_START);
+	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
+	hal_register_write(RG_TRX_STATE, CMD_TX_START);
 
 	wait_for_timer2(3);
 
-	hal_subregister_write(SR_TRX_CMD, CMD_FORCE_PLL_ON);
-	hal_subregister_write(SR_TRX_CMD, CMD_RX_ON);
+	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
+	hal_register_write(RG_TRX_STATE, CMD_RX_ON);
 
 	_delay_us(200); // wait some time for sender to be ready...
 
@@ -600,8 +600,8 @@ void at86rf233_pmuMagicReflector() {
 
 	at86rf233_setFrequency(2500, 1);
 
-	hal_subregister_write(SR_TRX_CMD, CMD_FORCE_PLL_ON);
-	hal_subregister_write(SR_TRX_CMD, CMD_TX_START);
+	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
+	hal_register_write(RG_TRX_STATE, CMD_TX_START);
 
 	wait_for_timer2(5);
 
