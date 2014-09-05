@@ -65,7 +65,8 @@
 // special symbols for serial output of sensor data
 #define SERIAL_FRAME_DELIMITER 0x7E
 #define SERIAL_ESCAPE_OCTET    0x7D
-#define SERIAL_BIT_FLIP_MASK   0x20
+#define SERIAL_ESCAPE_END      0x5E
+#define SERIAL_ESCAPE_ESCAPE   0x5D
 
 #define AT86RF233_ENTER_CRITICAL_REGION( ) {uint8_t volatile saved_sreg = SREG; cli( )
 #define AT86RF233_LEAVE_CRITICAL_REGION( ) SREG = saved_sreg;}
@@ -154,12 +155,23 @@ uint8_t at86rf233_setTarget(linkaddr_t *addr) {
 	linkaddr_copy(&target, addr);
 	return 1;
 }
+
 void at86rf233_sendEscaped(uint8_t d) {
-    if ((d == SERIAL_FRAME_DELIMITER) || (d == SERIAL_ESCAPE_OCTET)) { // if the current byte is the same as the FRAME_DELIMITER or ESCAPE_OCTET it must be escaped
+    if (d == SERIAL_FRAME_DELIMITER) { // if the current byte is the same as the FRAME_DELIMITER or ESCAPE_OCTET it must be escaped
         rs232_send(RS232_PORT_0, SERIAL_ESCAPE_OCTET);
-        d ^= SERIAL_BIT_FLIP_MASK;
+        rs232_send(RS232_PORT_0, SERIAL_ESCAPE_END);
     }
-    rs232_send(RS232_PORT_0, d);
+    else if (d == SERIAL_ESCAPE_OCTET) { // if the current byte is the same as the FRAME_DELIMITER or ESCAPE_OCTET it must be escaped
+		rs232_send(RS232_PORT_0, SERIAL_ESCAPE_OCTET);
+		rs232_send(RS232_PORT_0, SERIAL_ESCAPE_ESCAPE);
+    } else {
+    	rs232_send(RS232_PORT_0, d);
+    }
+}
+
+void at86rf233_send16bit(uint16_t d) {
+	at86rf233_sendEscaped((d>>8)&0xFF);
+	at86rf233_sendEscaped(d&0xFF);
 }
 
 void at86rf233_sendSerial(void) {
@@ -170,6 +182,23 @@ void at86rf233_sendSerial(void) {
 
     // send number of samples
     at86rf233_sendEscaped(PMU_SAMPLES);
+
+    // send step size
+    at86rf233_sendEscaped(PMU_STEP);
+
+    // TODO: send the four frequency blocks
+    // send start frequency
+    at86rf233_send16bit(PMU_START_FREQUENCY);
+    // send end frequency
+    at86rf233_send16bit(PMU_START_FREQUENCY+PMU_MEASUREMENTS);
+
+    // send fake additional frequency blocks
+    at86rf233_send16bit(0);
+    at86rf233_send16bit(0);
+    at86rf233_send16bit(0);
+    at86rf233_send16bit(0);
+    at86rf233_send16bit(0);
+    at86rf233_send16bit(0);
 
     uint16_t i;
     for (i = 0; i < PMU_MEASUREMENTS*PMU_SAMPLES; i++)
@@ -318,7 +347,7 @@ void at86rf233_statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 					f.content.result_confirm.result_data_type = RESULT_TYPE_PMU;
 					f.content.result_confirm.result_start_address = start_address;
 					f.content.result_confirm.result_length = result_length;
-					memcpy(&f.content.result_confirm.result_data, local_pmu_values[start_address], result_length);
+					memcpy(&f.content.result_confirm.result_data, &local_pmu_values[start_address], result_length);
 					AT86RF233_NETWORK.send(initiator_requested, result_length+5, &f);
 
 					fsm_state = WAIT_FOR_RESULT_REQ; // wait for more result requests
