@@ -375,7 +375,7 @@ static void send_serial(void) {
 
     	if (v > 127) {
     		v -= 256;
-    	} else if (v < -127) {
+    	} else if (v < -128) {
     		v += 256;
     	}
 
