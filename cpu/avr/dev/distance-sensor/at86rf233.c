@@ -545,18 +545,16 @@ void at86rf233_pmuMagicInitiator() {
 		wait_for_timer2(5);
 	}
 
-	wait_for_timer2(6);
-
-
-
-	printf("rssi: %u\n", rssi);
-
-	uint8_t j;
-	for (j = 0; j < PMU_MEASUREMENTS; j++) {
-		for (i = 0; i < PMU_SAMPLES; i++) {
-			printf("pmu[%u][%u]: %u\n", j, i, pmu_values[j][i]);
-		}
-	}
+//	wait_for_timer2(6);
+//
+//	printf("rssi: %u\n", rssi);
+//
+//	uint8_t j;
+//	for (j = 0; j < PMU_MEASUREMENTS; j++) {
+//		for (i = 0; i < PMU_SAMPLES; i++) {
+//			printf("pmu[%u][%u]: %u\n", j, i, local_pmu_values[j][i]);
+//		}
+//	}
 
 	restore_initial_status();
 	AT86RF233_LEAVE_CRITICAL_REGION();
@@ -645,16 +643,16 @@ void at86rf233_pmuMagicReflector() {
 		wait_for_timer2(5);
 	}
 
-	wait_for_timer2(6);
-
-	printf("rssi: %u\n", rssi);
-
-	uint8_t j;
-	for (j = 0; j < PMU_MEASUREMENTS; j++) {
-		for (i = 0; i < PMU_SAMPLES; i++) {
-			printf("pmu[%u][%u]: %u\n", j, i, pmu_values[j][i]);
-		}
-	}
+//	wait_for_timer2(6);
+//
+//	printf("rssi: %u\n", rssi);
+//
+//	uint8_t j;
+//	for (j = 0; j < PMU_MEASUREMENTS; j++) {
+//		for (i = 0; i < PMU_SAMPLES; i++) {
+//			printf("pmu[%u][%u]: %u\n", j, i, local_pmu_values[j][i]);
+//		}
+//	}
 
 	restore_initial_status();
 	AT86RF233_LEAVE_CRITICAL_REGION();
