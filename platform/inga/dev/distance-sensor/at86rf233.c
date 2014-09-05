@@ -1232,8 +1232,8 @@ PROCESS_THREAD(ranging_process, ev, data)
 		#endif
 
 		// declare buffers
-		static complex_t capture[FFT_N]; // complex phase data buffer and FFT buffer
-		static uint16_t spectrum[FFT_N]; // spectrum output buffer
+		complex_t capture[FFT_N]; // complex phase data buffer and FFT buffer
+		uint16_t spectrum[FFT_N]; // spectrum output buffer
 
 		// compute complex values from phase data
 		// loop over all phase values
