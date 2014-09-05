@@ -137,6 +137,7 @@ struct {
 	uint8_t raw_output;							// if 1, output PMU data to serial port
 	uint8_t allow_ranging;
 	uint8_t compute;
+	uint8_t interpolate;
 } settings;
 
 // allocate an array for the measurement results
@@ -273,6 +274,14 @@ uint8_t at86rf233_set_compute(uint8_t compute) {
 	return 0;
 }
 
+uint8_t at86rf233_set_interpolate(uint8_t interpolate) {
+	if (interpolate > 0) {
+		settings.interpolate = 1;
+	} else {
+		settings.interpolate = 0;
+	}
+	return 0;
+}
 // this gets call from the timeout_timer when it expires
 static void reset_statemachine() {
 	fsm_state = IDLE;
@@ -1274,38 +1283,47 @@ PROCESS_THREAD(ranging_process, ev, data)
 			}
 		}
 
-		// parabolic interpolation
-		uint16_t a = (peak_pos - 1) % FFT_N; // left neighbor of peak (might wrap around)
-		uint16_t c = (peak_pos + 1) % FFT_N; // right neighbor of peak (might wrap around)
+		float peak_pos_interp;
+		float peak_height_interp;
+		if (settings.interpolate) {
+			// parabolic interpolation
+			uint16_t a = (peak_pos - 1) % FFT_N; // left neighbor of peak (might wrap around)
+			uint16_t c = (peak_pos + 1) % FFT_N; // right neighbor of peak (might wrap around)
 
-		// interpolate peak position (between two FFT bins afterwards)
-		float peak_pos_interp = 0.5 * (spectrum[a] - spectrum[c]) / (spectrum[a] - 2 * spectrum[peak_pos] + spectrum[c]) + peak_pos;
+			// interpolate peak position (between two FFT bins afterwards)
+			peak_pos_interp = 0.5 * (spectrum[a] - spectrum[c]) / (spectrum[a] - 2 * spectrum[peak_pos] + spectrum[c]) + peak_pos;
 
-		// interpolate peak height
-		int16_t dac = spectrum[a] - spectrum[c];
-		float didx = peak_pos_interp - peak_pos;
-		float peak_height_interp = spectrum[peak_pos] - 0.25 * dac * didx;
+			// interpolate peak height
+			int16_t dac = spectrum[a] - spectrum[c];
+			float didx = peak_pos_interp - peak_pos;
+			peak_height_interp = spectrum[peak_pos] - 0.25 * dac * didx;
 
-		// fft_output() placed negative frequencies before the positive ones, we need to undo this
-		if (peak_pos_interp < 256) {
-			// negative frequencies are to the left of the spectrum, reorder to fit numpy output
-			peak_pos_interp += 256;
+			// fft_output() placed negative frequencies before the positive ones, we need to undo this
+			if (peak_pos_interp < 256) {
+				// negative frequencies are to the left of the spectrum, reorder to fit numpy output
+				peak_pos_interp += 256;
+			} else {
+				// positive frequencies are to the right of the spectrum, reorder to fit numpy output
+				peak_pos_interp -= 256;
+			}
 		} else {
-			// positive frequencies are to the right of the spectrum, reorder to fit numpy output
-			peak_pos_interp -= 256;
-		}
-
-		// fft_output() placed negative frequencies before the positive ones, we need to undo this
-		if (peak_pos < 256) {
-			// negative frequencies are to the left of the spectrum, reorder to fit numpy output
-			peak_pos += 256;
-		} else {
-			// positive frequencies are to the right of the spectrum, reorder to fit numpy output
-			peak_pos -= 256;
+			// fft_output() placed negative frequencies before the positive ones, we need to undo this
+			if (peak_pos < 256) {
+				// negative frequencies are to the left of the spectrum, reorder to fit numpy output
+				peak_pos += 256;
+			} else {
+				// positive frequencies are to the right of the spectrum, reorder to fit numpy output
+				peak_pos -= 256;
+			}
 		}
 
 		// compute distance in meters from peak position
-		float dist = D_PER_BIN * peak_pos_interp;
+		float dist;
+		if (settings.interpolate) {
+			dist = D_PER_BIN * peak_pos_interp;
+		} else {
+			dist = D_PER_BIN * peak_pos;
+		}
 
 		// check if measurement was successful
 		// TODO: check for DC signal (bin pos close to 0)

@@ -128,6 +128,10 @@ configure(int type, int c)
       at86rf233_set_compute(c);
       return 0;
 
+    case DISTANCE_INTERPOLATE:
+      at86rf233_set_interpolate(c);
+      return 0;
+
   }
   return 0;
 }

@@ -157,6 +157,8 @@ uint8_t at86rf233_set_allow_ranging(uint8_t allow);
 
 uint8_t at86rf233_set_compute(uint8_t compute);
 
+uint8_t at86rf233_set_interpolate(uint8_t interpolate);
+
 /**
  * \brief coap_input
  *        this function must be called by the network convergence layer for all incoming packages

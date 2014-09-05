@@ -75,6 +75,8 @@ extern const struct sensors_sensor distance_sensor;
 #define DISTANCE_RAW_OUTPUT    3
 // compute distance on sensor node
 #define DISTANCE_COMPUTE       4
+// use interpolation for distance computation (slower but more accurate)
+#define DISTANCE_INTERPOLATE   5
 
 // Status codes for SENSORS_READY
 #define DISTANCE_INVALID      0
