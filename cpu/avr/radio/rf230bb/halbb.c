@@ -677,7 +677,7 @@ hal_frame_write(uint8_t *write_buffer, uint8_t length)
 }
 
 /*----------------------------------------------------------------------------*/
-#if 0  //Uses 80 bytes (on Raven) omit unless needed
+#if 1  //Uses 80 bytes (on Raven) omit unless needed
 /** \brief Read SRAM
  *
  * This function reads from the SRAM of the radio transceiver.

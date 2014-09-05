@@ -441,10 +441,12 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 
 			// NOTE: pmu_magic at reflector sends sync frame as response to TIME_SYMC_REQUEST
 			int8_t pmu_magic_result = pmu_magic(PMU_MAGIC_ROLE_INITIATOR, PMU_MAGIC_MODE_CLASSIC);
-			if (pmu_magic_result) {
+			if (pmu_magic_result == -1) {
 				next_status_code = DISTANCE_NO_SYNC;
 				reset_statemachine(); // DIG2 timed out, abort!
-
+			} else if (pmu_magic_result == -2) {
+				next_status_code = DISTANCE_WRONG_SYNC;
+				reset_statemachine(); // synced to wrong frame, abort!
 			} else {
 				next_result_start = 0;
 				send_result_request(next_result_start);
@@ -948,91 +950,131 @@ static int8_t pmu_magic(pmu_magic_role_t role, pmu_magic_mode_t mode) {
 	}
 
 	// wait for sync signal
-	if (!wait_for_dig2()) {
-		if (role == PMU_MAGIC_ROLE_REFLECTOR) {
-			_delay_us(9.5243);	// DIG2 signal is on average 9.5243 us delayed on the initiator, reflector waits
-		}
-		start_timer2(7);		// timer counts to 7, we have 244us between synchronization points
-		//leds_off(2);
-
-		// now in sync with the other node
-
-		switch (role) {
-		case PMU_MAGIC_ROLE_INITIATOR:		// initiator
-			hal_subregister_write(SR_TX_RX, 0);				// RX PLL frequency is selected
-			break;
-		default:	// reflector
-			hal_subregister_write(SR_PMU_IF_INVERSE, 1);	// Inverse IF position
-			hal_subregister_write(SR_TX_RX, 1);				// TX PLL frequency is selected
-			break;
-		}
-
-		hal_subregister_write(SR_RX_PDT_DIS, 1);	// RX Path is disabled
-		hal_subregister_write(SR_PMU_EN, 1);		// enable PMU
-		hal_subregister_write(SR_MOD_SEL, 1);		// manual control of modulation data
-		hal_subregister_write(SR_MOD, 0);			// continuous 0 chips for modulation
-		hal_subregister_write(SR_TX_RX_SEL, 1);		// manual control of PLL frequency mode
-
-
-		wait_for_timer2(1);
-#if 0    // don't do this, it seems to not affect the measurement
-		// TODO: maybe add a function to HAL that writes only zeros to FB to save memory?
-		uint8_t fb_data[127] = {0};					// setup a framebuffer with all zeroes
-		// TODO: setting the FB to zeros does not seem toimpact the measurement, maybe remove it completely?
-		hal_frame_write(fb_data, 127);				// copy data to sram, framebuffer section
-
-		// antenna diversity control is skipped, we only have one antenna
-
-		wait_for_timer2(2);
-#endif
-		// measure RSSI
-		uint8_t rssi;
-		hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
-		switch (role) {
-		case PMU_MAGIC_ROLE_INITIATOR:		// initiator
-			hal_register_write(RG_TRX_STATE, CMD_RX_ON);
-			_delay_us(50); // wait some time for sender to be ready...
-			rssi = hal_subregister_read(SR_RSSI);
-			break;
-		default:	// reflector
-			hal_register_write(RG_TRX_STATE, CMD_TX_START);
-			break;
-		}
-
-		wait_for_timer2(3);
-
-		hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
-		switch (role) {
-		case PMU_MAGIC_ROLE_INITIATOR:		// initiator
-			hal_register_write(RG_TRX_STATE, CMD_TX_START);
-			break;
-		default:	// reflector
-			hal_register_write(RG_TRX_STATE, CMD_RX_ON);
-			_delay_us(50); // wait some time for sender to be ready...
-			rssi = hal_subregister_read(SR_RSSI);
-			break;
-		}
-
-		// TODO: set gain according to rssi
-		hal_register_write(RG_TST_AGC, 0x09);
-
-		wait_for_timer2(4);
-
-		switch(mode) {
-		case PMU_MAGIC_MODE_CLASSIC:
-			pmu_magic_mode_classic(role);
-			break;
-		default:
-			pmu_magic_mode_classic(role);
-			break;
-		}
-		ret_val = 0;
-	} else {
+	if (wait_for_dig2()) {
 		// DIG2 signal not found, abort measurement
 		// to be honest: if the reflector does not get the DIG2 from its own sending
 		// there must be something horribly wrong...
 		ret_val = -1; // DIG2 signal not seen, abort!
+		goto BAIL;
 	}
+
+	if (role == PMU_MAGIC_ROLE_REFLECTOR) {
+		_delay_us(9.5243);	// DIG2 signal is on average 9.5243 us delayed on the initiator, reflector waits
+		_delay_us(23.1557); // wait for the initiator to check if sync was valid
+		_delay_us(8.991);   // and wait some more...
+	}
+
+	if (role == PMU_MAGIC_ROLE_INITIATOR) {
+		// check if we got the TIME_SYNC_REQUEST back
+		uint8_t fb_data[5];
+		hal_sram_read(12, 5, fb_data);
+		uint8_t i;
+		//printf("\n");
+		//for (i = 0; i < 5; i++) {
+		//	printf("%x ", fb_data[i]);
+		//}
+		//printf("\n");
+
+		//printf("%x %x %x %x %x\n", settings.reflector.u8[0], settings.reflector.u8[1],linkaddr_node_addr.u8[0], linkaddr_node_addr.u8[1],  TIME_SYNC_REQUEST);
+
+		uint8_t valid = 1;
+		if (fb_data[0] != settings.reflector.u8[0]) {
+			valid = 0;
+		}
+		if (fb_data[1] != settings.reflector.u8[1]) {
+			valid = 0;
+		}
+		if (fb_data[2] != linkaddr_node_addr.u8[0]) {
+			valid = 0;
+		}
+		if (fb_data[3] != linkaddr_node_addr.u8[1]) {
+			valid = 0;
+		}
+		if (fb_data[4] != TIME_SYNC_REQUEST) {
+			valid = 0;
+		}
+		if (valid == 0) {
+			ret_val = -2; // synchonization was done with wrong frame
+			goto BAIL;
+		}
+	}
+	start_timer2(7);		// timer counts to 7, we have 244us between synchronization points
+	//leds_off(2);
+
+	// now in sync with the other node
+
+	switch (role) {
+	case PMU_MAGIC_ROLE_INITIATOR:		// initiator
+		hal_subregister_write(SR_TX_RX, 0);				// RX PLL frequency is selected
+		break;
+	default:	// reflector
+		hal_subregister_write(SR_PMU_IF_INVERSE, 1);	// Inverse IF position
+		hal_subregister_write(SR_TX_RX, 1);				// TX PLL frequency is selected
+		break;
+	}
+
+	hal_subregister_write(SR_RX_PDT_DIS, 1);	// RX Path is disabled
+	hal_subregister_write(SR_PMU_EN, 1);		// enable PMU
+	hal_subregister_write(SR_MOD_SEL, 1);		// manual control of modulation data
+	hal_subregister_write(SR_MOD, 0);			// continuous 0 chips for modulation
+	hal_subregister_write(SR_TX_RX_SEL, 1);		// manual control of PLL frequency mode
+
+
+	wait_for_timer2(1);
+#if 0    // don't do this, it seems to not affect the measurement
+	// TODO: maybe add a function to HAL that writes only zeros to FB to save memory?
+	uint8_t fb_data[127] = {0};					// setup a framebuffer with all zeroes
+	// TODO: setting the FB to zeros does not seem toimpact the measurement, maybe remove it completely?
+	hal_frame_write(fb_data, 127);				// copy data to sram, framebuffer section
+
+	// antenna diversity control is skipped, we only have one antenna
+
+	wait_for_timer2(2);
+#endif
+	// measure RSSI
+	uint8_t rssi;
+	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
+	switch (role) {
+	case PMU_MAGIC_ROLE_INITIATOR:		// initiator
+		hal_register_write(RG_TRX_STATE, CMD_RX_ON);
+		_delay_us(50); // wait some time for sender to be ready...
+		rssi = hal_subregister_read(SR_RSSI);
+		break;
+	default:	// reflector
+		hal_register_write(RG_TRX_STATE, CMD_TX_START);
+		break;
+	}
+
+	wait_for_timer2(3);
+
+	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
+	switch (role) {
+	case PMU_MAGIC_ROLE_INITIATOR:		// initiator
+		hal_register_write(RG_TRX_STATE, CMD_TX_START);
+		break;
+	default:	// reflector
+		hal_register_write(RG_TRX_STATE, CMD_RX_ON);
+		_delay_us(50); // wait some time for sender to be ready...
+		rssi = hal_subregister_read(SR_RSSI);
+		break;
+	}
+
+	// TODO: set gain according to rssi
+	hal_register_write(RG_TST_AGC, 0x09);
+
+	wait_for_timer2(4);
+
+	switch(mode) {
+	case PMU_MAGIC_MODE_CLASSIC:
+		pmu_magic_mode_classic(role);
+		break;
+	default:
+		pmu_magic_mode_classic(role);
+		break;
+	}
+	ret_val = 0;
+
+BAIL:
 
 	restore_initial_status();
 	watchdog_start();

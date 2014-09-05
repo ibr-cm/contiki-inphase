@@ -92,6 +92,8 @@ extern const struct sensors_sensor distance_sensor;
 #define DISTANCE_NO_SYNC      7
 // distance calculation returned wrong value
 #define DISTANCE_VALUE_ERROR  8
+// synced to wrong frame (not the one send by reflector)
+#define DISTANCE_WRONG_SYNC   9
 
 #endif /* __DISTANCE_SENSOR_H__ */
 
