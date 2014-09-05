@@ -106,8 +106,7 @@ configure(int type, int c)
 		return 0;
 
     case DISTANCE_FREQUENCIES:
-		at86rf233_set_frequencies(c);
-		return 0;
+		return at86rf233_set_frequencies(c);
 
     case DISTANCE_FREQ_STEP:
 		at86rf233_set_fstep(c);

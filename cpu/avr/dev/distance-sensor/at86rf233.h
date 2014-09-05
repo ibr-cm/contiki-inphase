@@ -137,7 +137,7 @@ uint8_t at86rf233_start_ranging(void);
 
 uint8_t at86rf233_set_target(linkaddr_t* addr);
 
-uint8_t at86rf233_set_frequencies(frequency_bands_t *f);
+int8_t at86rf233_set_frequencies(frequency_bands_t *f);
 
 uint8_t at86rf233_set_fstep(uint8_t fstep);
 
