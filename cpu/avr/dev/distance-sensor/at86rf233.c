@@ -512,6 +512,11 @@ void at86rf233_pmuMagicInitiator() {
 
 	wait_for_timer2(5);
 
+	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
+	hal_register_write(RG_TRX_STATE, CMD_TX_START);
+
+	wait_for_timer2(6);
+
 	printf("rssi: %u\n", rssi);
 
 	for (i = 0; i < PMU_SAMPLES; i++) {
@@ -605,7 +610,29 @@ void at86rf233_pmuMagicReflector() {
 
 	wait_for_timer2(5);
 
+	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
+	hal_register_write(RG_TRX_STATE, CMD_RX_ON);
+
+	_delay_us(50); // wait for sender to be ready
+
+#define PMU_SAMPLES 4
+
+	uint8_t pmu_values[PMU_SAMPLES];
+
+	uint8_t i;
+
+	for (i = 0; i < PMU_SAMPLES; i++) {
+		pmu_values[i] = hal_register_read(RG_PHY_PMU_VALUE);
+		//_delay_us(8); // values is updates every 8us
+	}
+
+	wait_for_timer2(6);
+
 	printf("rssi: %u\n", rssi);
+
+	for (i = 0; i < PMU_SAMPLES; i++) {
+		printf("pmu[%u]: %u\n", i, pmu_values[i]);
+	}
 
 //	while (1) {
 //		wait_for_timer2();
