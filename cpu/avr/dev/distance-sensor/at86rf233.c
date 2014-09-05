@@ -480,7 +480,7 @@ void at86rf233_pmuMagicInitiator() {
 	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
 	hal_register_write(RG_TRX_STATE, CMD_RX_ON);
 
-	_delay_us(200); // wait some time for sender to be ready...
+	_delay_us(50); // wait some time for sender to be ready...
 
 	uint8_t rssi = hal_subregister_read(SR_RSSI);
 	hal_register_write(RG_TST_AGC, 0x09);		// TODO: set gain according to rssi
@@ -497,7 +497,7 @@ void at86rf233_pmuMagicInitiator() {
 	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
 	hal_register_write(RG_TRX_STATE, CMD_RX_ON);
 
-	_delay_us(200); // wait for sender to be ready
+	_delay_us(50); // wait for sender to be ready
 
 #define PMU_SAMPLES 4
 
@@ -507,7 +507,7 @@ void at86rf233_pmuMagicInitiator() {
 
 	for (i = 0; i < PMU_SAMPLES; i++) {
 		pmu_values[i] = hal_register_read(RG_PHY_PMU_VALUE);
-		_delay_us(8); // values is updates every 8us
+		//_delay_us(8); // values is updates every 8us
 	}
 
 	wait_for_timer2(5);
@@ -591,7 +591,7 @@ void at86rf233_pmuMagicReflector() {
 	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
 	hal_register_write(RG_TRX_STATE, CMD_RX_ON);
 
-	_delay_us(200); // wait some time for sender to be ready...
+	_delay_us(50); // wait some time for sender to be ready...
 
 	uint8_t rssi = hal_subregister_read(SR_RSSI);
 	hal_register_write(RG_TST_AGC, 0x09);		// TODO: set gain according to rssi
