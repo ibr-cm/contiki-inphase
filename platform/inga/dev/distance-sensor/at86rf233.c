@@ -84,10 +84,10 @@
 // configuration of signaling on the LEDs
 // LEDs can be disabled to enabled measurement of power consumption
 #define PMU_GREEN_LED	(PMU_LED_ON_WHILE_RANGING | PMU_LED_ON_WHILE_CALC)
-#define PMU_YELLOW_LED	PMU_LED_ON_WHILE_PMU_READ
+//#define PMU_YELLOW_LED	PMU_LED_ON_WHILE_PMU_READ
 
 //#define PMU_GREEN_LED	PMU_LED_NONE
-//#define PMU_YELLOW_LED	PMU_LED_NONE
+#define PMU_YELLOW_LED	PMU_LED_NONE
 
 // possibilities to display on LEDs
 #define PMU_LED_NONE				0	// do not change LEDs
@@ -139,7 +139,7 @@ struct {
 uint8_t local_pmu_values[PMU_VALUES_LEN];
 int8_t* signed_local_pmu_values = (int8_t*)local_pmu_values;	// reuse buffer to save memory
 
-#define MEASUREMENT_TIMEOUT (0.5 * CLOCK_SECOND)
+#define MEASUREMENT_TIMEOUT (0.05 * CLOCK_SECOND)
 struct ctimer timeout_timer;  	// if this timer runs out, the measurement has
 								// failed due to a timeout in the network
 
@@ -283,6 +283,9 @@ static void send_serial(void) {
 
 	// send total amount of samples
 	binary_send_short(PMU_MEASUREMENTS);
+
+	// send reflector address
+	binary_send_short(settings.reflector.u16);
 
 	// send calculated distance meter
 	binary_send_byte(dist_last_meter);
@@ -859,7 +862,7 @@ static int8_t pmu_magic(uint8_t type) {
 			_delay_us(9.5243);	// DIG2 signal is on average 9.5243 us delayed on the initiator, reflector waits
 		}
 		start_timer2(18);		// timer counts to 18, we have 580us between synchronization points
-		leds_off(2);
+		//leds_off(2);
 
 		// now in sync with the other node
 
@@ -1072,7 +1075,7 @@ PROCESS_THREAD(ranging_process, ev, data)
 	#if PMU_YELLOW_LED & PMU_LED_ON_WHILE_CALC
 		leds_on(LEDS_YELLOW);
 	#endif
-
+/*
 	static uint16_t j; // 16 bit counter for loops
 
 	// calculate autocorrelation
@@ -1088,10 +1091,6 @@ PROCESS_THREAD(ranging_process, ev, data)
 		autocorr_values[j] = 0;
 	}
 	PROCESS_PAUSE();
-
-	/*for (j = 0; j < FFT_N; j++) {
-		printf("autocorr: %d\n", autocorr_values[j]);
-	}*/
 
 	// run fft
 	static complex_t fft_buff[FFT_N];							// FTT buffer
@@ -1150,7 +1149,7 @@ PROCESS_THREAD(ranging_process, ev, data)
 	}
 
 	PRINTF("distance: %u.%u meter\n", (uint8_t)dist, (uint8_t)((dist-((uint8_t)dist))*100));
-
+*/
 	#if PMU_GREEN_LED & PMU_LED_ON_WHILE_CALC
 		leds_off(LEDS_GREEN);
 	#endif
