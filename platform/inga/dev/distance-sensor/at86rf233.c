@@ -190,6 +190,8 @@ uint8_t at86rf233_init(void) {
 
 	settings.raw_output = 0;
 	settings.allow_ranging = 0; // ranging is disabled by default
+	settings.compute = 1; 		// computation is enabled by default
+	settings.interpolate = 1;   // interpolation is enabled by default
 
 	return 0; // sensor successfully initialized
 }
