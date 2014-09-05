@@ -319,7 +319,7 @@ void init_timer2(void)
 	TIFR2 = 0xFF;		// clear flags
 	TCNT2 = 0x00;		// set counter to 0
 	TCCR2A = 0b00000010;// CTC mode, TOP = OCR2A
-	TCCR2B = 0x01;		// default, prescaler 1x
+	TCCR2B = 0;			// default, stop timer
 }
 
 void restore_timer2(void)
@@ -332,9 +332,12 @@ void restore_timer2(void)
 	TCCR2B = TCCR2B_s;
 }
 
-void set_max_timer2(uint8_t max) {
+void start_timer2(uint8_t max) {
+	TCCR2B = 0;			// ensure that the timer is stopped, otherwise setting TCNT2 may go wrong!
+	TCNT2 = 0;
 	OCR2A = max;
 	TIFR2 = 0xFF;		// clear flags
+	TCCR2B = 0x01;		// default, prescaler 1x
 }
 
 void wait_for_timer2(uint8_t id) {
@@ -352,7 +355,7 @@ void wait_for_dig2(void) {
 	leds_on(2);
 	while ((PINB & (1<<PB0)) == 0) {}	// TODO: define this input pin in the platform
 	while ((PINB & (1<<PB0)) == 1) {}	// wait for falling edge, these are closer together than the rising edges
-	set_max_timer2(20);
+	start_timer2(18);					// timer counts to 18, we have 580us between synchronization points
 	leds_off(2);
 }
 
