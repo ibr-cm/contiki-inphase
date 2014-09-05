@@ -125,7 +125,7 @@ PROCESS_THREAD(initiator_process, ev, data)
 	reflector.u8[0] = REFLECTOR_ADDR >> 8;
 	reflector.u8[1] = REFLECTOR_ADDR & 0x00FF;
 
-	distance_sensor->configure(DISTANCE_RAW_OUTPUT, 1); // output raw data
+	distance_sensor->configure(DISTANCE_RAW_OUTPUT, 0); // output raw data
 	PRINTF_P("Reflector %x.%x\n", reflector.u8[0], reflector.u8[1]); // debug message
 	// set reflector
 	distance_sensor->configure(DISTANCE_TARGET, (int)&reflector);
@@ -148,7 +148,7 @@ PROCESS_THREAD(initiator_process, ev, data)
 			status = distance_sensor->status(SENSORS_READY);
 			PROCESS_PAUSE();
 		}
-		print_status(status);
+		//print_status(status);
 	}
 
 	PROCESS_END();
@@ -179,7 +179,7 @@ PROCESS_THREAD(reflector_process, ev, data)
 
 	while (1) {
 		// not much to do here...
-		print_status_nospam(distance_sensor->status(SENSORS_READY));
+		//print_status_nospam(distance_sensor->status(SENSORS_READY));
 		PROCESS_PAUSE();
 	}
 
