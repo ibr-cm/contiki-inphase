@@ -853,8 +853,8 @@ static int8_t pmu_magic(uint8_t type) {
 		_delay_ms(2); // wait for initiator, it needs more time before it listens to DIG2
 
 		hal_subregister_write(SR_TRX_CMD, CMD_TX_ARET_ON);
-		hal_set_slptr_low();
 		hal_set_slptr_high(); // send the packet at the latest time possible
+		hal_set_slptr_low();
 	}
 
 	// wait for sync signal
