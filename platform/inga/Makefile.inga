@@ -8,7 +8,7 @@ INGA_INTERFACES = i2c.c  mspi.c sdcard.c
 INGA_DRIVERS = leds-arch.c adc.c at45db.c adxl345.c bmp085.c l3g4200d.c mpl115a.c mag3110.c at86rf233.c at86rf233-rime.c
 INGA_SENSORS = sensors.c acc-sensor.c adc-sensor.c battery-sensor.c \
 	       button-sensor.c gyro-sensor.c pressure-sensor.c radio-sensor.c mag-sensor.c distance-sensor.c
-INGA_SOURCEFILES += ffft.S
+INGA_SOURCEFILES += ffft.S binary-uart.c
 INGA_SOURCEFILES += $(INGA_INTERFACES) $(INGA_DRIVERS) $(INGA_SENSORS)
 
 ifeq ($(REV),)
