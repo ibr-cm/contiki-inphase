@@ -305,7 +305,7 @@ static void send_serial(void) {
 	binary_send_byte(status_code);
 
 	// transmit data
-	binary_send_data(&local_pmu_values, PMU_MEASUREMENTS);
+	binary_send_data(local_pmu_values, PMU_MEASUREMENTS);
 
     binary_end_frame();
 }
