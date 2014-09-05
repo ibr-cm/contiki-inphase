@@ -133,6 +133,11 @@ uint8_t at86rf233_deinit(void);
 
 int8_t at86rf233_get_status();
 
+// measurement values
+uint8_t at86rf233_get_dist_meter();
+uint8_t at86rf233_get_dist_centimeter();
+uint8_t at86rf233_get_quality();
+
 uint8_t at86rf233_start_ranging(void);
 
 uint8_t at86rf233_set_target(linkaddr_t* addr);

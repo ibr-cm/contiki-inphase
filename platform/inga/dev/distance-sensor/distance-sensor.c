@@ -48,9 +48,11 @@ value(int type)
 {
   switch (type) {
     case DISTANCE_LAST_DIST_METER:
-      return 1;
+      return at86rf233_get_dist_meter();
     case DISTANCE_LAST_DIST_CENTIMETER:
-      return 100;
+      return at86rf233_get_dist_centimeter();
+    case DISTANCE_LAST_DIST_QUALITY:
+      return at86rf233_get_quality();
   }
   return 0;
 }

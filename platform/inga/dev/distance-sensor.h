@@ -63,8 +63,10 @@ typedef struct {
 } frequency_bands_t;
 
 // Values to read
+// this always reads data from the last successful measurement
 #define DISTANCE_LAST_DIST_METER        0
 #define DISTANCE_LAST_DIST_CENTIMETER   1
+#define DISTANCE_LAST_DIST_QUALITY      2
 
 // Configuration parameters
 
@@ -97,6 +99,8 @@ typedef struct {
 #define DISTANCE_NO_REFLECTOR 6
 // timing synchronization failed
 #define DISTANCE_NO_SYNC      7
+// distance calculation returned wrong value
+#define DISTANCE_VALUE_ERROR  8
 
 #endif /* __DISTANCE_SENSOR_H__ */
 

@@ -67,11 +67,29 @@
 #define PMU_MINIMUM_FREQUENCY 2322		// minimum frequency from AT86RF233 data sheet
 #define PMU_MAXIMUM_FREQUENCY 2527		// maximum frequency from AT86RF233 data sheet (maybe 2543.5 MHz will work)
 
-#define PMU_START_FREQUENCY 2400 // start frequency for measurement
-#define PMU_SAMPLES 4	// number of samples that are taken for each frequency by both nodes
-#define PMU_SAMPLES_SHIFT 2 // bitshift to substitute the division by the PMU_SAMPLES
-#define PMU_MEASUREMENTS 200 // number of frequencies to measure
-#define PMU_STEP 1 // frequency step for measurement
+#define PMU_START_FREQUENCY 2400		// start frequency for measurement
+#define PMU_SAMPLES 4					// number of samples that are taken for each frequency by both nodes
+#define PMU_SAMPLES_SHIFT 2				// bitshift to substitute the division by the PMU_SAMPLES
+#define PMU_MEASUREMENTS 200			// number of frequencies to measure
+#define PMU_STEP 1						// frequency step for measurement
+
+// calibration values for quadratic
+#define PMU_CALIB_X2 77.515678989k		// quadratic part
+#define PMU_CALIB_X  132.76889372k		// linear part
+#define PMU_CALIB_B  0.59048228802k		// constant part
+
+// configuration of signaling on the LEDs
+// LEDs can be disabled to enabled measurement of power consumption
+#define PMU_GREEN_LED	PMU_LED_ON_WHILE_RANGING
+#define PMU_YELLOW_LED	PMU_LED_ENABLE_ON_ERROR
+
+// possibilities to display on LEDs
+#define PMU_LED_NONE				0	// do not change LEDs
+#define PMU_LED_TIMER_TOGGLE		1	// toggle LED when sync timer runs out (display this on oscilloscope)
+#define PMU_LED_ON_WHILE_RANGING	2	// enable LED during ranging
+#define PMU_LED_ON_WHILE_CALC		3	// enable LED during distance calculation
+#define PMU_LED_ON_WHILE_DIG2		4	// enable LED while waiting for DIG2 signal
+#define PMU_LED_ENABLE_ON_ERROR		5	// turn LED on on error, disable it on next measurement
 
 #define AT86RF233_ENTER_CRITICAL_REGION( ) {uint8_t volatile saved_sreg = SREG; cli( )
 #define AT86RF233_LEAVE_CRITICAL_REGION( ) SREG = saved_sreg;}
@@ -96,6 +114,11 @@ PROCESS(ranging_process, "AT86RF233 Ranging process");
 static int8_t pmu_magic(uint8_t type);
 
 uint8_t status_code;
+uint8_t next_status_code;
+
+uint8_t dist_last_meter = 0;
+uint8_t dist_last_centimeter = 0;
+uint8_t dist_last_quality = 0;
 
 struct {
 	linkaddr_t reflector;						// address of the reflector
@@ -114,8 +137,6 @@ int8_t* signed_local_pmu_values = (int8_t*)local_pmu_values;	// reuse buffer to 
 #define MEASUREMENT_TIMEOUT (0.5 * CLOCK_SECOND)
 struct ctimer timeout_timer;  	// if this timer runs out, the measurement has
 								// failed due to a timeout in the network
-
-uint8_t next_status_code;
 
 enum fsm_states {
 	IDLE,
@@ -180,6 +201,19 @@ uint8_t at86rf233_deinit(void) {
 int8_t at86rf233_get_status() {
 	return status_code;
 }
+
+uint8_t at86rf233_get_dist_meter() {
+	return dist_last_meter;
+}
+
+uint8_t at86rf233_get_dist_centimeter() {
+	return dist_last_centimeter;
+}
+
+uint8_t at86rf233_get_quality() {
+	return dist_last_quality;
+}
+
 
 uint8_t at86rf233_start_ranging(void) {
 
@@ -322,6 +356,15 @@ uint8_t at86rf233_set_raw_output(uint8_t raw) {
 static void reset_statemachine() {
 	fsm_state = IDLE;
 	status_code = next_status_code;
+
+	// indicate errors
+	#if PMU_GREEN_LED == PMU_LED_ENABLE_ON_ERROR
+		leds_on(LEDS_GREEN);
+	#endif
+	#if PMU_YELLOW_LED == PMU_LED_ENABLE_ON_ERROR
+		leds_on(LEDS_YELLOW);
+	#endif
+
 }
 
 static void send_serial(void) {
@@ -476,7 +519,6 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 					send_serial(); // all results gathered, send via serial port
 				}
 				fsm_state = IDLE;
-				status_code = DISTANCE_IDLE;
 				ctimer_stop(&timeout_timer); // done, stop timer
 			}
 		} else {
@@ -670,30 +712,58 @@ static void wait_for_timer2(uint8_t id) {
 	}
 	while (!(TIFR2 & (1 << OCF2A))){}	// wait for compare match
 	TIFR2 = 0xFF;
-	leds_toggle(1);						// show that the timer ran out (debugging on oscilloscope)
+
+	// show that the timer ran out (debugging on oscilloscope)
+	#if PMU_GREEN_LED == PMU_LED_TIMER_TOGGLE
+		leds_toggle(LEDS_GREEN);
+	#endif
+	#if PMU_YELLOW_LED == PMU_LED_TIMER_TOGGLE
+		leds_toggle(LEDS_YELLOW);
+	#endif
 }
 /*---------------------------------------------------------------------------*/
 
 static int8_t wait_for_dig2(void) {
-	leds_on(2);
-	leds_off(1);
+	// turn LED on while waiting
+	#if PMU_GREEN_LED == PMU_LED_ON_WHILE_DIG2
+		leds_on(LEDS_GREEN);
+	#endif
+	#if PMU_YELLOW_LED == PMU_LED_ON_WHILE_DIG2
+		leds_on(LEDS_YELLOW);
+	#endif
 	// wait for DIG2
 	uint16_t cnt0 = 1;	// this counts up while waiting for the signal, when it overflows the measurement is aborted
 	uint16_t cnt1 = 1;	// this counts up while waiting for the signal, when it overflows the measurement is aborted
 	while ((DIG2_PIN & (1<<DIG2_PIN_BIT)) == 0) {
 		cnt0++;
 		if (cnt0 == 0) {
-			leds_on(1);
+			#if PMU_GREEN_LED == PMU_LED_ON_WHILE_DIG2
+				leds_off(LEDS_GREEN);
+			#endif
+			#if PMU_YELLOW_LED == PMU_LED_ON_WHILE_DIG2
+				leds_off(LEDS_YELLOW);
+			#endif
 			return -1;	// signal never went low, abort measurement
 		}
 	}
 	while ((DIG2_PIN & (1<<DIG2_PIN_BIT)) == 1) {	// wait for falling edge, these are closer together than the rising edges
 		cnt1++;
 		if (cnt1 == 0) {
+			#if PMU_GREEN_LED == PMU_LED_ON_WHILE_DIG2
+				leds_off(LEDS_GREEN);
+			#endif
+			#if PMU_YELLOW_LED == PMU_LED_ON_WHILE_DIG2
+				leds_off(LEDS_YELLOW);
+			#endif
 			return -1;	// signal never went high, abort measurement
 		}
 	}
-	leds_off(2);
+	#if PMU_GREEN_LED == PMU_LED_ON_WHILE_DIG2
+		leds_off(LEDS_GREEN);
+	#endif
+	#if PMU_YELLOW_LED == PMU_LED_ON_WHILE_DIG2
+		leds_off(LEDS_YELLOW);
+	#endif
 	return 0;	// everything worked as expected
 }
 
@@ -814,8 +884,19 @@ static int8_t pmu_magic(uint8_t type) {
 		break;
 	}
 
-	leds_off(2);
-	leds_off(1);
+	// disable LED if timer toggle is indicated to make sure it always toggles the same
+	// enable LED if it indicates ranging
+	#if PMU_GREEN_LED == PMU_LED_TIMER_TOGGLE
+		leds_off(LEDS_GREEN);
+	#elif PMU_GREEN_LED == PMU_LED_ON_WHILE_RANGING
+		leds_on(LEDS_GREEN);
+	#endif
+
+	#if PMU_YELLOW_LED == PMU_LED_TIMER_TOGGLE
+		leds_off(LEDS_YELLOW);
+	#elif PMU_YELLOW_LED == PMU_LED_ON_WHILE_RANGING
+		leds_on(LEDS_YELLOW);
+	#endif
 
 	AT86RF233_ENTER_CRITICAL_REGION();
 	watchdog_stop();
@@ -823,7 +904,8 @@ static int8_t pmu_magic(uint8_t type) {
 
 	init_timer2();
 
-	hal_subregister_write(SR_TX_PWR, 0xF);			// set TX output power to -17dBm to avoid reflections
+	//hal_subregister_write(SR_TX_PWR, 0xF);			// set TX output power to -17dBm to avoid reflections
+	hal_subregister_write(SR_TX_PWR, 0x0);			// set TX output power to +4dBm, MAXIMUM POWER
 	hal_register_read(RG_IRQ_STATUS);				// clear all pending interrupts
 	hal_subregister_write(SR_ARET_TX_TS_EN, 0x1);	// signal frame transmission via DIG2
 	hal_subregister_write(SR_IRQ_2_EXT_EN, 0x1);	// enable time stamping via DIG2
@@ -974,6 +1056,13 @@ static int8_t pmu_magic(uint8_t type) {
 	watchdog_start();
 	AT86RF233_LEAVE_CRITICAL_REGION();
 
+	#if PMU_GREEN_LED == PMU_LED_ON_WHILE_RANGING
+		leds_off(LEDS_GREEN);
+	#endif
+	#if PMU_YELLOW_LED == PMU_LED_ON_WHILE_RANGING
+		leds_off(LEDS_YELLOW);
+	#endif
+
 	return ret_val;
 }
 
@@ -1005,9 +1094,26 @@ PROCESS_THREAD(ranging_process, ev, data)
 {
 	PROCESS_BEGIN();
 
+	static uint8_t calc_status;
+	calc_status = DISTANCE_INVALID;
+
+	// new measurement start, no error so far
+	#if PMU_GREEN_LED == PMU_LED_ENABLE_ON_ERROR
+		leds_off(LEDS_GREEN);
+	#endif
+	#if PMU_YELLOW_LED == PMU_LED_ENABLE_ON_ERROR
+		leds_off(LEDS_YELLOW);
+	#endif
+
 	// check if the reflector address is set
 	if (linkaddr_cmp(&settings.reflector, &linkaddr_null)) {
 		// no reflector address is set, ranging not possible
+		#if PMU_GREEN_LED == PMU_LED_ENABLE_ON_ERROR
+				leds_on(LEDS_GREEN);
+		#endif
+		#if PMU_YELLOW_LED == PMU_LED_ENABLE_ON_ERROR
+				leds_on(LEDS_YELLOW);
+		#endif
 		return 0;
 	}
 
@@ -1034,16 +1140,37 @@ PROCESS_THREAD(ranging_process, ev, data)
 
 	while (fsm_state != IDLE) {
 		// TODO: use event to avoid busy waiting
+		PRINTF("DISTANCE_PROCESS: FSM_STATE: %u\n", fsm_state);
 		PROCESS_PAUSE(); // wait while measurement is running
 	}
 
+	if (status_code != DISTANCE_RUNNING) {
+		// measurement was not successful, do not calculate a distance
+	#if PMU_GREEN_LED == PMU_LED_ENABLE_ON_ERROR
+			leds_on(LEDS_GREEN);
+	#endif
+	#if PMU_YELLOW_LED == PMU_LED_ENABLE_ON_ERROR
+			leds_on(LEDS_YELLOW);
+	#endif
+		PRINTF("DISTANCE_PROCESS: measurement not successful\n");
+		PROCESS_EXIT();
+	}
+
 	// start calculation of distance
+
+	#if PMU_GREEN_LED == PMU_LED_ON_WHILE_CALC
+		leds_on(LEDS_GREEN);
+	#endif
+	#if PMU_YELLOW_LED == PMU_LED_ON_WHILE_CALC
+		leds_on(LEDS_YELLOW);
+	#endif
+
 	static uint16_t j; // 16 bit counter for loops
 
 	// calculate autocorrelation
-#if FFT_N < PMU_MEASUREMENTS
-	#error FFT size too small!
-#endif
+	#if FFT_N < PMU_MEASUREMENTS
+		#error FFT size too small!
+	#endif
 	static int16_t autocorr_values[FFT_N];
 	autocorr(signed_local_pmu_values, autocorr_values, PMU_MEASUREMENTS);
 	PROCESS_PAUSE();
@@ -1082,16 +1209,51 @@ PROCESS_THREAD(ranging_process, ev, data)
 	//printf("peak_idx: %u\n", peak_idx);
 
 	// calculate distance from peak
-	accum dist = (77.515678989k / (FFT_N/2) / (FFT_N/2) * peak_idx * peak_idx + 132.76889372k / (FFT_N/2) * peak_idx - 0.59048228802k);
-
-	if (peak_val > 30) {
-		printf("GOOD ");
-	}
-
-	printf("distance: %.2f\n", (float)dist);
+	accum dist = (PMU_CALIB_X2 / (FFT_N/2) / (FFT_N/2) * peak_idx * peak_idx + PMU_CALIB_X / (FFT_N/2) * peak_idx - PMU_CALIB_B);
 
 
 	// check if measurement was successful
+	if (dist < 0) {
+		// the distance must always be positive, otherwise the measurement is useless
+		calc_status = DISTANCE_VALUE_ERROR;
+	} else {
+		// measurement was ok,
+		dist_last_meter = (uint8_t)dist;
+		dist_last_centimeter = (uint8_t)((dist-dist_last_meter)*100);
+
+		// calculate quality
+		// just use the peak value from the fft
+		if (peak_val > 255) {
+			dist_last_quality = 255;
+		} else {
+			dist_last_quality = (uint8_t)peak_val;
+		}
+
+	}
+
+	PRINTF("DISTANCE_PROCESS: ");
+
+	if (peak_val > 40) {
+		if (dist > 0) {
+			PRINTF("GOOD ");
+		}
+	}
+
+	PRINTF("distance: %.2f\n", (float)dist);
+
+	#if PMU_GREEN_LED == PMU_LED_ON_WHILE_CALC
+		leds_off(LEDS_GREEN);
+	#endif
+	#if PMU_YELLOW_LED == PMU_LED_ON_WHILE_CALC
+		leds_off(LEDS_YELLOW);
+	#endif
+
+	// everything is done
+	if (calc_status != DISTANCE_INVALID) {
+		status_code = calc_status;
+	} else {
+		status_code = DISTANCE_IDLE;
+	}
 
 	PROCESS_END();
 }
