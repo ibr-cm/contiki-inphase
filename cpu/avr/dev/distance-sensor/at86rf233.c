@@ -49,6 +49,8 @@
 #include "net/packetbuf.h"
 #include "dev/watchdog.h"
 
+#include "dev/rs232.h"
+
 #include <avr/io.h>
 #include <avr/interrupt.h>
 
@@ -58,6 +60,11 @@
 #define PMU_SAMPLES 4	// number of samples that are taken for each frequency by both nodes
 #define PMU_MEASUREMENTS 200 // number of frequencies to measure
 #define PMU_STEP 1 // frequency step for measurement
+
+// special symbols for serial output of sensor data
+#define SERIAL_FRAME_DELIMITER 0x7E
+#define SERIAL_ESCAPE_OCTET    0x7D
+#define SERIAL_BIT_FLIP_MASK   0x20
 
 #define AT86RF233_ENTER_CRITICAL_REGION( ) {uint8_t volatile saved_sreg = SREG; cli( )
 #define AT86RF233_LEAVE_CRITICAL_REGION( ) SREG = saved_sreg;}
@@ -138,6 +145,41 @@ uint8_t at86rf233_setTarget(linkaddr_t *addr) {
 	printf("DISTANCE: Set target to %d.%d\n", addr->u8[0], addr->u8[1]); // debug message
 	linkaddr_copy(&target, addr);
 	return 1;
+}
+void at86rf233_sendEscaped(uint8_t d) {
+    if ((d == SERIAL_FRAME_DELIMITER) || (d == SERIAL_ESCAPE_OCTET)) { // if the current byte is the same as the FRAME_DELIMITER or ESCAPE_OCTET it must be escaped
+        rs232_send(RS232_PORT_0, SERIAL_ESCAPE_OCTET);
+        d ^= SERIAL_BIT_FLIP_MASK;
+    }
+    rs232_send(RS232_PORT_0, d);
+}
+
+void at86rf233_sendSerial(void) {
+    rs232_send(RS232_PORT_0, SERIAL_FRAME_DELIMITER);
+
+    // send number of measurements
+    at86rf233_sendEscaped(PMU_MEASUREMENTS);
+
+    // send number of samples
+    at86rf233_sendEscaped(PMU_SAMPLES);
+
+    uint16_t i;
+    for (i = 0; i < PMU_MEASUREMENTS*PMU_SAMPLES; i++)
+    {
+    	// do basic calculations to make transmission via serial faster
+    	int16_t v = local_pmu_values[i]-remote_pmu_values[i];
+
+    	if (v > 127) {
+    		v -= 256;
+    	} else if (v < -127) {
+    		v += 256;
+    	}
+
+    	// transmit data
+    	at86rf233_sendEscaped((v & 0xFF));
+    }
+
+    rs232_send(RS232_PORT_0, SERIAL_FRAME_DELIMITER);
 }
 
 void at86rf233_statemachine(uint8_t frame_type, frame_subframe_t *frame) {
@@ -222,6 +264,7 @@ void at86rf233_statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 			if (next_start < PMU_MEASUREMENTS*PMU_SAMPLES) {
 				fsm_state = RESULT_REQUESTED;
 			} else {
+				at86rf233_sendSerial(); // all results gathered, send via serial port
 				fsm_state = IDLE;
 			}
 		} else {
