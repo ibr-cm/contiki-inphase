@@ -1362,7 +1362,7 @@ PROCESS_THREAD(ranging_process, ev, data)
 
 		PRINTF("DISTANCE_PROCESS: ");
 
-		PRINTF("distance: %u.%u meter\n", (uint8_t)dist, (uint8_t)((dist-((uint8_t)dist))*100));
+		PRINTF("distance: %u.%02u meter\n", (uint8_t)dist, (uint8_t)((dist-((uint8_t)dist))*100));
 
 		#if PMU_GREEN_LED & PMU_LED_ON_WHILE_CALC
 			leds_off(LEDS_GREEN);
