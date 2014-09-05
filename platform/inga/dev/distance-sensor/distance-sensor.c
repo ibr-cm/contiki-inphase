@@ -52,6 +52,10 @@ value(int type)
       return at86rf233_get_dist_centimeter();
     case DISTANCE_LAST_DIST_QUALITY:
       return at86rf233_get_quality();
+    case DISTANCE_LAST_RAW_LEN:
+      return at86rf233_get_raw_len();
+    case DISTANCE_LAST_RAW_PTR:
+      return at86rf233_get_raw_ptr();
   }
   return 0;
 }

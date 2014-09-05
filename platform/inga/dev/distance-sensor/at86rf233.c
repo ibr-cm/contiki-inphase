@@ -127,7 +127,8 @@ struct {
 } settings;
 
 // allocate an array with 206 bytes, this works for full spectrum at 1 MHz steps
-uint8_t local_pmu_values[PMU_MAXIMUM_FREQUENCY-PMU_MINIMUM_FREQUENCY+1];
+#define PMU_VALUES_LEN PMU_MAXIMUM_FREQUENCY-PMU_MINIMUM_FREQUENCY+1
+uint8_t local_pmu_values[PMU_VALUES_LEN];
 int8_t* signed_local_pmu_values = (int8_t*)local_pmu_values;	// reuse buffer to save memory
 
 #define MEASUREMENT_TIMEOUT (0.5 * CLOCK_SECOND)
@@ -199,6 +200,14 @@ uint8_t at86rf233_get_dist_centimeter() {
 
 uint8_t at86rf233_get_quality() {
 	return dist_last_quality;
+}
+
+uint16_t at86rf233_get_raw_len() {
+	return PMU_VALUES_LEN;
+}
+
+int8_t* at86rf233_get_raw_ptr() {
+	return signed_local_pmu_values;
 }
 
 

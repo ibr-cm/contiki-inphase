@@ -60,6 +60,8 @@ extern const struct sensors_sensor distance_sensor;
 #define DISTANCE_LAST_DIST_METER        0
 #define DISTANCE_LAST_DIST_CENTIMETER   1
 #define DISTANCE_LAST_DIST_QUALITY      2
+#define DISTANCE_LAST_RAW_LEN			3	// length of the buffer with the raw value
+#define DISTANCE_LAST_RAW_PTR			4	// pointer to the raw distance values
 
 // Configuration parameters
 
