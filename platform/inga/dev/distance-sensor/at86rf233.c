@@ -1005,8 +1005,6 @@ static int8_t pmu_magic(pmu_magic_role_t role, pmu_magic_mode_t mode) {
 		}
 	}
 
-	wait_for_timer2(0);
-
 	switch (role) {
 	case PMU_MAGIC_ROLE_INITIATOR:		// initiator
 		hal_subregister_write(SR_TX_RX, 0);				// RX PLL frequency is selected
