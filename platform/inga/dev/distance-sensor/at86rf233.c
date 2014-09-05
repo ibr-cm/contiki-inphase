@@ -1090,18 +1090,6 @@ BAIL:
 void pmu_magic_mode_classic(pmu_magic_role_t role) {
 	uint8_t i;
 	for (i=0; i < PMU_MEASUREMENTS; i++) {
-		/*switch (type) {
-		case 0:		// initiator
-			setFrequency(PMU_START_FREQUENCY + (i * PMU_STEP), 0);
-			receiver_pmu(&local_pmu_values[i]);
-			sender_pmu();
-			break;
-		default:	// reflector
-			setFrequency(PMU_START_FREQUENCY + (i * PMU_STEP), 1);
-			sender_pmu();
-			receiver_pmu(&local_pmu_values[i]);
-			break;
-		}*/
 		// use 500 kHz spacing
 		uint8_t f, f_full, f_half;
 		switch (role) {
