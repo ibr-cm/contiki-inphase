@@ -65,7 +65,8 @@
 linkaddr_t target;
 linkaddr_t initiator_requested;
 
-uint8_t pmu_values[PMU_MEASUREMENTS][PMU_SAMPLES];
+uint8_t local_pmu_values[PMU_MEASUREMENTS*PMU_SAMPLES];
+uint8_t remote_pmu_values[PMU_MEASUREMENTS*PMU_SAMPLES];
 
 enum fsm_states {
 	IDLE,
@@ -539,7 +540,7 @@ void at86rf233_pmuMagicInitiator() {
 	uint8_t i;
 	for (i=0; i < PMU_MEASUREMENTS; i++) {
 		at86rf233_setFrequency(2322 + (i * PMU_STEP), 0);
-		at86rf233_receiverPMU(pmu_values[i]);
+		at86rf233_receiverPMU(&local_pmu_values[i*PMU_SAMPLES]);
 		at86rf233_senderPMU();
 		wait_for_timer2(5);
 	}
@@ -640,7 +641,7 @@ void at86rf233_pmuMagicReflector() {
 	for (i=0; i < PMU_MEASUREMENTS; i++) {
 		at86rf233_setFrequency(2322 + (i * PMU_STEP), 1);
 		at86rf233_senderPMU();
-		at86rf233_receiverPMU(pmu_values[i]);
+		at86rf233_receiverPMU(&local_pmu_values[i*PMU_SAMPLES]);
 		wait_for_timer2(5);
 	}
 
