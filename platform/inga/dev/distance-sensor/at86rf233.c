@@ -222,6 +222,7 @@ int8_t* at86rf233_get_raw_ptr() {
 
 uint8_t at86rf233_start_ranging(void) {
 
+
 	if (process_is_running(&ranging_process)) {
 		return 1;
 	}
@@ -269,7 +270,6 @@ static void reset_statemachine() {
 	#if PMU_YELLOW_LED & PMU_LED_ENABLE_ON_ERROR
 		leds_on(LEDS_YELLOW);
 	#endif
-
 }
 
 static void send_serial(void) {
@@ -759,14 +759,14 @@ static void setFrequency(uint16_t f, uint8_t offset) {
 static void sender_pmu(void) {
 	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
 	hal_register_write(RG_TRX_STATE, CMD_TX_START);
-	_delay_us(60 + 15 * PMU_SAMPLES);	// wait for receiver to measure
+	_delay_us(70 + 15 * PMU_SAMPLES);	// wait for receiver to measure
 }
 
 static void receiver_pmu(uint8_t* pmu_values) {
 	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
 	hal_register_write(RG_TRX_STATE, CMD_RX_ON);
 
-	_delay_us(50); // wait for sender to be ready
+	_delay_us(45); // wait for sender to be ready
 
 	#if PMU_GREEN_LED & PMU_LED_ON_WHILE_PMU_READ
 		leds_on(LEDS_GREEN);
@@ -865,7 +865,7 @@ static int8_t pmu_magic(uint8_t type) {
 		if (type) {
 			_delay_us(9.5243);	// DIG2 signal is on average 9.5243 us delayed on the initiator, reflector waits
 		}
-		start_timer2(18);		// timer counts to 18, we have 580us between synchronization points
+		start_timer2(7);		// timer counts to 7, we have 244us between synchronization points
 		//leds_off(2);
 
 		// now in sync with the other node
@@ -930,7 +930,6 @@ static int8_t pmu_magic(uint8_t type) {
 		hal_register_write(RG_TST_AGC, 0x09);
 
 		wait_for_timer2(4);
-		start_timer2(10);					// timer counts to 10, we have 336us between synchronization points
 
 		uint8_t i;
 		for (i=0; i < PMU_MEASUREMENTS; i++) {
