@@ -58,6 +58,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#define PMU_START_FREQUENCY 2322 // start frequency for measurement
 #define PMU_SAMPLES 4	// number of samples that are taken for each frequency by both nodes
 #define PMU_MEASUREMENTS 200 // number of frequencies to measure
 #define PMU_STEP 1 // frequency step for measurement
@@ -491,7 +492,6 @@ void wait_for_timer2(uint8_t id) {
 
 int8_t wait_for_dig2(void) {
 	// wait for DIG2
-	leds_on(2);
 	uint16_t cnt0 = 1;	// this counts up while waiting for the signal, when it overflows the measurement is aborted
 	uint16_t cnt1 = 1;	// this counts up while waiting for the signal, when it overflows the measurement is aborted
 	while ((PINB & (1<<PB0)) == 0) {	// TODO: define this input pin in the platform
@@ -506,8 +506,6 @@ int8_t wait_for_dig2(void) {
 			return -1;	// signal never went high, abort measurement
 		}
 	}
-	start_timer2(18);					// timer counts to 18, we have 580us between synchronization points
-	leds_off(2);
 
 	return 0;	// everything worked as expected
 }
@@ -627,6 +625,8 @@ void at86rf233_pmuMagicInitiator() {
 
 	// wait for sync signal
 	wait_for_dig2();
+	start_timer2(18);					// timer counts to 18, we have 580us between synchronization points
+	leds_off(2);
 
 	// now in sync with the reflector
 
@@ -727,6 +727,9 @@ void at86rf233_pmuMagicReflector() {
 
 	// wait for sync signal
 	wait_for_dig2();
+	_delay_us(9.5243);					// DIG2 signal is on average 9.5243 us delayed on the other node
+	start_timer2(18);					// timer counts to 18, we have 580us between synchronization points
+	leds_off(2);
 
 	// now in sync with the initiator
 
