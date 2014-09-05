@@ -106,11 +106,12 @@ typedef struct {
 
 typedef struct {
 	uint8_t result_data_type;
-	uint8_t result_start_address;
+	uint16_t result_start_address;
 } frame_result_request_t;
 
 typedef struct {
 	uint8_t  result_data_type;
+	uint16_t result_start_address;
 	uint16_t result_length;
 	void  *result_data;
 } frame_result_confirm_t;
