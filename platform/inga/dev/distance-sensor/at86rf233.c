@@ -1302,11 +1302,15 @@ PROCESS_THREAD(ranging_process, ev, data)
 			uint16_t a = (peak_pos - 1) % FFT_N; // left neighbor of peak (might wrap around)
 			uint16_t c = (peak_pos + 1) % FFT_N; // right neighbor of peak (might wrap around)
 
+			// difference of spectrum at the points before and after the peak
+			int16_t dac = spectrum[a] - spectrum[c];
+
 			// interpolate peak position (between two FFT bins afterwards)
-			peak_pos_interp = 0.5 * (spectrum[a] - spectrum[c]) / (spectrum[a] - 2 * spectrum[peak_pos] + spectrum[c]) + peak_pos;
+			uint32_t peak_2 = 2 * spectrum[peak_pos];
+			int32_t denom = spectrum[a] - peak_2 + spectrum[c];
+			peak_pos_interp = 0.5 * dac / (float)denom + peak_pos;
 
 			// interpolate peak height
-			int16_t dac = spectrum[a] - spectrum[c];
 			float didx = peak_pos_interp - peak_pos;
 			peak_height_interp = spectrum[peak_pos] - 0.25 * dac * didx;
 
