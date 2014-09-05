@@ -69,6 +69,7 @@
 
 #define PMU_START_FREQUENCY 2322 // start frequency for measurement
 #define PMU_SAMPLES 4	// number of samples that are taken for each frequency by both nodes
+#define PMU_SAMPLES_SHIFT 2 // bitshift to substitut the division by the PMU_SAMPLES
 #define PMU_MEASUREMENTS 200 // number of frequencies to measure
 #define PMU_STEP 1 // frequency step for measurement
 
@@ -113,9 +114,8 @@ struct {
 
 // TODO: allocate these buffers at runtime depending on settings (Contiki mmem)
 // allocate two arrays with 824 bytes each, this works for full spectrum at 1 MHz steps
-uint8_t local_pmu_values[(PMU_MAXIMUM_FREQUENCY-PMU_MINIMUM_FREQUENCY+1)*PMU_SAMPLES];
-// TODO: only allocate this buffer when running as initiator to store received values
-uint8_t remote_pmu_values[(PMU_MAXIMUM_FREQUENCY-PMU_MINIMUM_FREQUENCY+1)*PMU_SAMPLES];
+uint8_t local_pmu_values[PMU_MAXIMUM_FREQUENCY-PMU_MINIMUM_FREQUENCY+1];
+int8_t* signed_local_pmu_values = (int8_t*)local_pmu_values;	// reuse buffer to save memory
 
 #define MEASUREMENT_TIMEOUT (0.5 * CLOCK_SECOND)
 struct ctimer timeout_timer;  	// if this timer runs out, the measurement has
@@ -335,7 +335,7 @@ static void send_serial(void) {
 	binary_start_frame();
 
     // send number of samples per frequency
-    binary_send_byte(PMU_SAMPLES);
+    binary_send_byte(1); // only one sample is transmitted it is already averaged
 
     // send step size
     binary_send_byte(PMU_STEP);
@@ -351,19 +351,11 @@ static void send_serial(void) {
 	}
 
     uint16_t j;
-    for (j = 0; j < PMU_MEASUREMENTS*PMU_SAMPLES; j++)
+    for (j = 0; j < PMU_MEASUREMENTS; j++)
     {
-    	// do basic calculations to make transmission via serial faster
-    	int16_t v = local_pmu_values[j]-remote_pmu_values[j];
-
-    	if (v > 127) {
-    		v -= 256;
-    	} else if (v < -128) {
-    		v += 256;
-    	}
-
+    	// TODO: use binary_send_data() here
     	// transmit data
-    	binary_send_byte((v & 0xFF));
+    	binary_send_byte(local_pmu_values[j]);
     }
 
     //rs232_send(RS232_PORT_0, SERIAL_FRAME_END);
@@ -462,7 +454,17 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 			uint16_t result_length = frame->result_confirm.result_length;
 			uint16_t i;
 			for (i = 0; i < result_length; i++) {
-				remote_pmu_values[i+last_start] = frame->result_confirm.result_data[i];
+				// do basic calculations to save memory
+				int16_t v = local_pmu_values[i+last_start]-frame->result_confirm.result_data[i];
+
+				if (v > 127) {
+					v -= 256;
+				} else if (v < -128) {
+					v += 256;
+				}
+
+				// overwrite data in local array
+				signed_local_pmu_values[i+last_start] = (int8_t)v;
 			}
 
 			uint16_t next_start = last_start + result_length;
@@ -473,7 +475,7 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 			f.content.result_request.result_data_type = RESULT_TYPE_PMU;
 			f.content.result_request.result_start_address = next_start;
 			AT86RF233_NETWORK.send(settings.reflector, sizeof(frame_result_request_t)+1, &f);
-			if (next_start < PMU_MEASUREMENTS*PMU_SAMPLES) {
+			if (next_start < PMU_MEASUREMENTS) {
 				fsm_state = RESULT_REQUESTED;
 			} else {
 				if (settings.raw_output) {
@@ -516,17 +518,17 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 			if (frame->result_request.result_data_type == RESULT_TYPE_PMU) {
 				// send a pmu result frame
 				uint16_t start_address = frame->result_request.result_start_address;
-				if (start_address >= PMU_MEASUREMENTS*PMU_SAMPLES) {
+				if (start_address >= PMU_MEASUREMENTS) {
 					// start address points outside of the pmu data, this indicates that the initiator does not need more data
 					fsm_state = IDLE;
 					status_code = DISTANCE_IDLE;
 					ctimer_stop(&timeout_timer); // done, stop timer
 				} else {
 					uint8_t result_length;
-					if (((PMU_MEASUREMENTS*PMU_SAMPLES) - start_address) > RESULT_DATA_LENGTH) {
+					if ((PMU_MEASUREMENTS - start_address) > RESULT_DATA_LENGTH) {
 						result_length = RESULT_DATA_LENGTH;
 					} else {
-						result_length = (PMU_MEASUREMENTS*PMU_SAMPLES) - start_address;
+						result_length = PMU_MEASUREMENTS - start_address;
 					}
 
 					frame_range_basic_t f;
@@ -795,11 +797,12 @@ static void receiver_pmu(uint8_t* pmu_values) {
 	_delay_us(50); // wait for sender to be ready
 
 	uint8_t i;
-
+	uint16_t accumulator = 0; // this hold all sampled pmu values
 	for (i = 0; i < PMU_SAMPLES; i++) {
-		pmu_values[i] = hal_register_read(RG_PHY_PMU_VALUE);
+		accumulator += hal_register_read(RG_PHY_PMU_VALUE);
 		//_delay_us(8); // value is updated every 8us but we are slower with reading the value anyway
 	}
+	pmu_values[0] = (accumulator>>PMU_SAMPLES_SHIFT); // divide by the number of samples
 }
 
 // unified version of pmu magic
@@ -937,13 +940,13 @@ static int8_t pmu_magic(uint8_t type) {
 			switch (type) {
 			case 0:		// initiator
 				setFrequency(2322 + (i * PMU_STEP), 0);
-				receiver_pmu(&local_pmu_values[i*PMU_SAMPLES]);
+				receiver_pmu(&local_pmu_values[i]);
 				sender_pmu();
 				break;
 			default:	// reflector
 				setFrequency(2322 + (i * PMU_STEP), 1);
 				sender_pmu();
-				receiver_pmu(&local_pmu_values[i*PMU_SAMPLES]);
+				receiver_pmu(&local_pmu_values[i]);
 				break;
 			}
 			wait_for_timer2(5);
@@ -1023,35 +1026,12 @@ PROCESS_THREAD(ranging_process, ev, data)
 	// start calculation of distance
 	static uint16_t j; // 16 bit counter for loops
 
-	// calculate average value
-	static int8_t pmu_values[PMU_MEASUREMENTS];
-	for (j = 0; j < PMU_MEASUREMENTS; j++) {
-		int16_t v;
-		v  = local_pmu_values[j*4+0]-remote_pmu_values[j*4+0];
-		v += local_pmu_values[j*4+1]-remote_pmu_values[j*4+1];
-		v += local_pmu_values[j*4+2]-remote_pmu_values[j*4+2];
-		v += local_pmu_values[j*4+3]-remote_pmu_values[j*4+3];
-
-		v /= 4;
-
-		if (v > 127) {
-			v -= 256;
-		} else if (v < -128) {
-			v += 256;
-		}
-
-		pmu_values[j] = (int8_t)v; // lets hope the compiler does this in a good way...
-		//printf("pmu_values: %d\n", v);
-	}
-	PROCESS_PAUSE();
-
-
 	// calculate autocorrelation
 #if FFT_N < PMU_MEASUREMENTS
 	#error FFT size too small!
 #endif
 	static int16_t autocorr_values[FFT_N];
-	autocorr(pmu_values, autocorr_values, PMU_MEASUREMENTS);
+	autocorr(signed_local_pmu_values, autocorr_values, PMU_MEASUREMENTS);
 	PROCESS_PAUSE();
 
 	// fill rest of window with zeroes
