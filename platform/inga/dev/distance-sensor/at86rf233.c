@@ -1338,7 +1338,11 @@ PROCESS_THREAD(ranging_process, ev, data)
 			dist_last_centimeter = (uint8_t)((dist-dist_last_meter)*100);
 
 			// just use the peak value from the fft
-			dist_last_quality = peak_height;
+			if (settings.interpolate) {
+				dist_last_quality = peak_height_interp;
+			} else {
+				dist_last_quality = peak_height;
+			}
 		}
 
 		PRINTF("DISTANCE_PROCESS: ");
