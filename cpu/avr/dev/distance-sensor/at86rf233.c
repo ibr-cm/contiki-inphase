@@ -359,13 +359,27 @@ void wait_for_timer2(uint8_t id) {
 }
 /*---------------------------------------------------------------------------*/
 
-void wait_for_dig2(void) {
+int8_t wait_for_dig2(void) {
 	// wait for DIG2
 	leds_on(2);
-	while ((PINB & (1<<PB0)) == 0) {}	// TODO: define this input pin in the platform
-	while ((PINB & (1<<PB0)) == 1) {}	// wait for falling edge, these are closer together than the rising edges
+	uint16_t cnt0 = 1;	// this counts up while waiting for the signal, when it overflows the measurement is aborted
+	uint16_t cnt1 = 1;	// this counts up while waiting for the signal, when it overflows the measurement is aborted
+	while ((PINB & (1<<PB0)) == 0) {	// TODO: define this input pin in the platform
+		cnt0++;
+		if (cnt0 == 0) {
+			return -1;	// signal never went low, abort measurement
+		}
+	}
+	while ((PINB & (1<<PB0)) == 1) {	// wait for falling edge, these are closer together than the rising edges
+		cnt1++;
+		if (cnt1 == 0) {
+			return -1;	// signal never went high, abort measurement
+		}
+	}
 	start_timer2(18);					// timer counts to 18, we have 580us between synchronization points
 	leds_off(2);
+
+	return 0;	// everything worked as expected
 }
 
 uint8_t rf230_state;
