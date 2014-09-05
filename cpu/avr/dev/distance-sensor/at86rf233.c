@@ -413,6 +413,30 @@ void restore_initial_status(void) {
 	watchdog_start();
 }
 
+// set the frequency in MHz to send on
+// if offset == 1, the frequency is 0.5 Mhz higher
+void at86rf233_setFrequency(uint16_t f, uint8_t offset) {
+	if (f < 2322) {
+		// frequency is not supported
+	} else if (f < 2434) {
+		// CC_BAND is 0x8
+		hal_register_write(RG_CC_CTRL_1, 0x08);
+		f -= 2306;			// f is now between 0x10 and 0x7F
+	} else if (f < 2528) {
+		// CC_BAND is 0x9
+		hal_register_write(RG_CC_CTRL_1, 0x09);
+		f -= 2434;			// f is now between 0x00 and 0x5D
+	} else {
+		// frequency is not supported
+	}
+	f = f << 1;				// f is now between 0x00 and 0xFE
+	if (offset) {
+		f += 1;				// f is chosen 0.5 MHz higher (0x01 to 0xFF)
+	}
+
+	hal_register_write(RG_CC_CTRL_0, (uint8_t)f);
+}
+
 void at86rf233_pmuMagicInitiator() {
 	printf("entered PMU Initiator\n");
 
@@ -471,8 +495,7 @@ void at86rf233_pmuMagicInitiator() {
 
 	wait_for_timer2(4);
 
-	hal_register_write(RG_CC_CTRL_1, 0x09);
-	hal_register_write(RG_CC_CTRL_0, 0x85);		// 2500.5 MHz
+	at86rf233_setFrequency(2500, 0);
 
 	hal_subregister_write(SR_TRX_CMD, CMD_FORCE_PLL_ON);
 	hal_subregister_write(SR_TRX_CMD, CMD_RX_ON);
@@ -581,8 +604,7 @@ void at86rf233_pmuMagicReflector() {
 
 	wait_for_timer2(4);
 
-	hal_register_write(RG_CC_CTRL_1, 0x09);
-	hal_register_write(RG_CC_CTRL_0, 0x85);		// 2500.5 MHz
+	at86rf233_setFrequency(2500, 1);
 
 	hal_subregister_write(SR_TRX_CMD, CMD_FORCE_PLL_ON);
 	hal_subregister_write(SR_TRX_CMD, CMD_TX_START);
