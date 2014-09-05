@@ -1254,9 +1254,11 @@ PROCESS_THREAD(ranging_process, ev, data)
 		complex_t capture[FFT_N]; // complex phase data buffer and FFT buffer
 		uint16_t spectrum[FFT_N]; // spectrum output buffer
 
+		uint16_t i; // loop variable
+
 		// compute complex values from phase data
 		// loop over all phase values
-		for (int16_t i = 0; i < PMU_MEASUREMENTS; i++) {
+		for (i = 0; i < PMU_MEASUREMENTS; i++) {
 			// get phase value from array
 			int8_t angle = signed_local_pmu_values[i];
 			// lookup real and imaginary parts from table
@@ -1269,7 +1271,7 @@ PROCESS_THREAD(ranging_process, ev, data)
 		}
 
 		// pad the unused FFT input with zeros
-		for (int16_t i = PMU_MEASUREMENTS; i < FFT_N; i++) {
+		for (i = PMU_MEASUREMENTS; i < FFT_N; i++) {
 			capture[i].r = 0;
 			capture[i].i = 0;
 		}
@@ -1285,7 +1287,7 @@ PROCESS_THREAD(ranging_process, ev, data)
 		uint16_t peak_height = 0;
 		uint16_t peak_pos = 0;
 		// loop over the spectrum
-		for (int16_t i = 0; i < FFT_N; i++) {
+		for (i = 0; i < FFT_N; i++) {
 			// save new peak if higher than the last found
 			if (spectrum[i] > peak_height) {
 				peak_height = spectrum[i];
