@@ -1072,7 +1072,9 @@ PROCESS_THREAD(ranging_process, ev, data)
 	//printf("peak_idx: %u\n", peak_idx);
 
 	// calculate distance from peak
-	accum dist = (PMU_CALIB_X2 / (FFT_N/2) / (FFT_N/2) * peak_idx * peak_idx + PMU_CALIB_X / (FFT_N/2) * peak_idx - PMU_CALIB_B);
+	fract m = (2.0k * peak_idx) / (1.0k * FFT_N); // take care of 500 kHz spacing
+	PRINTF("DISTANCE_PROCESS: m: %f\n", (float)m);
+	accum dist = (PMU_CALIB_X2 * m * m + PMU_CALIB_X * m - PMU_CALIB_B);
 
 
 	// check if measurement was successful
@@ -1102,7 +1104,7 @@ PROCESS_THREAD(ranging_process, ev, data)
 		}
 	}
 
-	PRINTF("distance: %.2f\n", (float)dist);
+	PRINTF("distance: %u.%u meter\n", (uint8_t)dist, (uint8_t)((dist-((uint8_t)dist))*100));
 
 	#if PMU_GREEN_LED & PMU_LED_ON_WHILE_CALC
 		leds_off(LEDS_GREEN);
