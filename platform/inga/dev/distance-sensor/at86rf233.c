@@ -310,6 +310,52 @@ static void send_serial(void) {
     binary_end_frame();
 }
 
+static void send_range_request(frame_subframe_t *frame) {
+	// send RANGE_REQUEST
+	frame_range_basic_t f;
+	f.frame_type = RANGE_REQUEST;
+	memcpy(&f.content.range_request, frame, sizeof(frame_range_request_t));
+	AT86RF233_NETWORK.send(settings.reflector, sizeof(frame_range_request_t)+1, &f);
+}
+
+static void send_range_accept(void) {
+	// send RANGE_ACCEPT
+	frame_range_basic_t f;
+	f.frame_type = RANGE_ACCEPT;
+	f.content.range_accept.ranging_accept = RANGE_ACCEPT_STATUS_SUCCESS;
+	f.content.range_accept.reject_reason = 0;
+	f.content.range_accept.accepted_ranging_method = RANGING_METHOD_PMU;
+	f.content.range_accept.accepted_capabilities = 0x00;
+	AT86RF233_NETWORK.send(settings.initiator, sizeof(frame_range_accept_t)+1, &f);
+}
+
+static void send_time_sync_request(void) {
+	// send TIME_SYNC_REQUEST
+	frame_range_basic_t f;
+	f.frame_type = TIME_SYNC_REQUEST;
+	AT86RF233_NETWORK.send(settings.reflector, 1, &f);
+}
+
+static void send_result_request(uint16_t start_address) {
+	// send RESULT_REQUEST
+	frame_range_basic_t f;
+	f.frame_type = RESULT_REQUEST;
+	f.content.result_request.result_data_type = RESULT_TYPE_PMU;
+	f.content.result_request.result_start_address = start_address;
+	AT86RF233_NETWORK.send(settings.reflector, sizeof(frame_result_request_t)+1, &f);
+}
+
+static void send_result_confirm(uint16_t start_address, uint16_t result_length) {
+	// send RESULT_CONFIRM
+	frame_range_basic_t f;
+	f.frame_type = RESULT_CONFIRM;
+	f.content.result_confirm.result_data_type = RESULT_TYPE_PMU;
+	f.content.result_confirm.result_start_address = start_address;
+	f.content.result_confirm.result_length = result_length;
+	memcpy(&f.content.result_confirm.result_data, &local_pmu_values[start_address], result_length);
+	AT86RF233_NETWORK.send(settings.initiator, result_length+5, &f);
+}
+
 static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 
 	PRINTF("DISTANCE: state: frame_type: %u, fsm_state: %u\n", frame_type, fsm_state);
@@ -322,11 +368,8 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 			next_status_code = DISTANCE_NO_REFLECTOR;
 			ctimer_set(&timeout_timer, MEASUREMENT_TIMEOUT, reset_statemachine, NULL); // setup timeout_timer
 
-			// send RANGE_REQUEST
-			frame_range_basic_t f;
-			f.frame_type = RANGE_REQUEST;
-			memcpy(&f.content.range_request, frame, sizeof(frame_range_request_t));
-			AT86RF233_NETWORK.send(settings.reflector, sizeof(frame_range_request_t)+1, &f);
+			send_range_request(frame);
+
 			fsm_state = RANGING_REQUESTED;
 		}
 		else if (frame_type == RANGE_REQUEST) {
@@ -338,14 +381,8 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 				next_status_code = DISTANCE_TIMEOUT;
 				ctimer_set(&timeout_timer, MEASUREMENT_TIMEOUT, reset_statemachine, NULL); // setup timeout_timer
 
-				// send RANGE_ACCEPT
-				frame_range_basic_t f;
-				f.frame_type = RANGE_ACCEPT;
-				f.content.range_accept.ranging_accept = RANGE_ACCEPT_STATUS_SUCCESS;
-				f.content.range_accept.reject_reason = 0;
-				f.content.range_accept.accepted_ranging_method = RANGING_METHOD_PMU;
-				f.content.range_accept.accepted_capabilities = 0x00;
-				AT86RF233_NETWORK.send(settings.initiator, sizeof(frame_range_accept_t)+1, &f);
+				send_range_accept();
+
 				fsm_state = RANGING_ACCEPTED;
 			}
 		} else {
@@ -362,10 +399,7 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 			next_status_code = DISTANCE_TIMEOUT;
 			ctimer_restart(&timeout_timer); // partner sent valid next frame, reset timer
 
-			// send TIME_SYNC_REQUEST
-			frame_range_basic_t f;
-			f.frame_type = TIME_SYNC_REQUEST;
-			AT86RF233_NETWORK.send(settings.reflector, 1, &f);
+			send_time_sync_request();
 
 			ctimer_stop(&timeout_timer); // stop timer for pmu_magic
 			if (pmu_magic(0)) {
@@ -375,12 +409,8 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 			} else {
 				ctimer_restart(&timeout_timer); // magic finished, restart timer
 
-				// send RESULT_REQUEST
-				frame_range_basic_t f2;
-				f2.frame_type = RESULT_REQUEST;
-				f2.content.result_request.result_data_type = RESULT_TYPE_PMU;
-				f2.content.result_request.result_start_address = 0;
-				AT86RF233_NETWORK.send(settings.reflector, sizeof(frame_result_request_t)+1, &f2);
+				send_result_request(0);
+
 				fsm_state = RESULT_REQUESTED;
 			}
 		} else {
@@ -419,12 +449,8 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 
 			uint16_t next_start = last_start + result_length;
 
-			// send RESULT_REQUEST if more results are needed
-			frame_range_basic_t f;
-			f.frame_type = RESULT_REQUEST;
-			f.content.result_request.result_data_type = RESULT_TYPE_PMU;
-			f.content.result_request.result_start_address = next_start;
-			AT86RF233_NETWORK.send(settings.reflector, sizeof(frame_result_request_t)+1, &f);
+			send_result_request(next_start);
+
 			if (next_start < PMU_MEASUREMENTS) {
 				fsm_state = RESULT_REQUESTED;
 			} else {
@@ -477,13 +503,7 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 						result_length = PMU_MEASUREMENTS - start_address;
 					}
 
-					frame_range_basic_t f;
-					f.frame_type = RESULT_CONFIRM;
-					f.content.result_confirm.result_data_type = RESULT_TYPE_PMU;
-					f.content.result_confirm.result_start_address = start_address;
-					f.content.result_confirm.result_length = result_length;
-					memcpy(&f.content.result_confirm.result_data, &local_pmu_values[start_address], result_length);
-					AT86RF233_NETWORK.send(settings.initiator, result_length+5, &f);
+					send_result_confirm(start_address, result_length);
 
 					fsm_state = WAIT_FOR_RESULT_REQ; // wait for more result requests
 				}
