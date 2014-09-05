@@ -52,6 +52,8 @@
 #include "net/packetbuf.h"
 #include "dev/watchdog.h"
 
+#include "platform-conf.h"
+
 #include "dev/rs232.h"
 
 #include <avr/io.h>
@@ -82,19 +84,35 @@
 #define PRINTF(...)
 #endif
 
+#ifndef DIG2_PIN
+#error "DIG2_PIN not defined, please define it in platform-conf.h"
+#endif
+
+#ifndef DIG2_PIN_BIT
+#error "DIG2_PIN_BIT not defined, please define it in platform-conf.h"
+#endif
+
 PROCESS(ranging_process, "AT86RF233 Ranging process");
 
-static void pmu_magic_initiator();
-
-static void pmu_magic_reflector();
+static int8_t pmu_magic(uint8_t type);
 
 uint8_t status_code;
 
-linkaddr_t target;
-linkaddr_t initiator_requested;
+struct {
+	linkaddr_t reflector;						// address of the reflector
+	linkaddr_t initiator;						// address of the initiator that issued the current measurement
+	uint16_t f_start[DISTANCE_FREQUENCY_BANDS];	// frequency bands to measure
+	uint16_t f_stop[DISTANCE_FREQUENCY_BANDS];
+	uint8_t f_step;								// frequency step in MHz, 0 = 500 kHz
+	uint8_t raw_output;							// if 1, output PMU data to serial port
+} settings;
 
 uint8_t local_pmu_values[PMU_MEASUREMENTS*PMU_SAMPLES];
 uint8_t remote_pmu_values[PMU_MEASUREMENTS*PMU_SAMPLES];
+
+#define MEASUREMENT_TIMEOUT (1 * CLOCK_SECOND)
+struct ctimer timeout_timer;  	// if this timer runs out, the measurement has
+								// failed due to a timeout in the network
 
 enum fsm_states {
 	IDLE,
@@ -124,8 +142,18 @@ uint8_t at86rf233_init(void) {
 	AT86RF233_NETWORK.init();
 
 	// initialize needed data structures
-	linkaddr_copy(&target, &linkaddr_null); // invalidate target address
-	linkaddr_copy(&initiator_requested, &linkaddr_null); // invalidate initiator_requested address
+	linkaddr_copy(&settings.reflector, &linkaddr_null); // invalidate reflector address
+	linkaddr_copy(&settings.initiator, &linkaddr_null); // invalidate initiator_requested address
+
+	// copy frequency bands
+	uint8_t i;
+	for (i = 0; i < DISTANCE_FREQUENCY_BANDS; i++) {
+		settings.f_start[i] = 0;
+		settings.f_stop[i] = 0;
+	}
+	settings.f_step = 1;
+
+	settings.raw_output = 0;
 
 	if (!at86rf233_available()) {
 		status_code = DISTANCE_NO_RF233;
@@ -144,6 +172,10 @@ uint8_t at86rf233_deinit(void) {
 	return 1; // sensor successfully deinitialized
 }
 
+int8_t at86rf233_get_status() {
+	return status_code;
+}
+
 uint8_t at86rf233_start_ranging(void) {
 
 	if (process_is_running(&ranging_process)) {
@@ -156,9 +188,48 @@ uint8_t at86rf233_start_ranging(void) {
 }
 
 uint8_t at86rf233_set_target(linkaddr_t *addr) {
-	PRINTF("DISTANCE: Set target to %d.%d\n", addr->u8[0], addr->u8[1]); // debug message
-	linkaddr_copy(&target, addr);
+	PRINTF("DISTANCE: Set reflector to %d.%d\n", addr->u8[0], addr->u8[1]); // debug message
+	linkaddr_copy(&settings.reflector, addr);
 	return 1;
+}
+
+uint8_t at86rf233_set_frequencies(frequency_bands_t *f) {
+	// TODO: check if frequencies are valid and return error
+	// return 0 on error
+
+	// copy frequency bands
+	uint8_t i;
+	for (i = 0; i < DISTANCE_FREQUENCY_BANDS; i++) {
+		settings.f_start[i] = f->f_start[i];
+		settings.f_stop[i] = f->f_stop[i];
+
+		PRINTF("DISTANCE: settings.f_start[%d]: %d, settings.f_stop[%d]: %d\n",
+				i, settings.f_start[i], i, settings.f_stop[i]);
+	}
+	return 1;
+}
+
+uint8_t at86rf233_set_fstep(uint8_t fstep) {
+	// TODO: check if steps are valid and return error
+	// return 0 on error
+	settings.f_step = fstep;
+	PRINTF("DISTANCE: settings.f_step: %d\n", settings.f_step);
+	return 1;
+}
+
+uint8_t at86rf233_set_raw_output(uint8_t raw) {
+	if (raw > 0) {
+		settings.raw_output = 1;
+	} else {
+		settings.raw_output = 0;
+	}
+	return 0;
+}
+
+// this gets call from the timeout_timer when it expires
+static void reset_statemachine() {
+	fsm_state = IDLE;
+	status_code = DISTANCE_TIMEOUT;
 }
 
 static void send_escaped(uint8_t d) {
@@ -226,7 +297,7 @@ static void send_serial(void) {
 
 static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 
-	PRINTF("state: frame_type: %u, fsm_state: %u\n", frame_type, fsm_state);
+	PRINTF("DISTANCE: state: frame_type: %u, fsm_state: %u\n", frame_type, fsm_state);
 
 	_delay_us(25); // FIXME: this is some race condition
 
@@ -236,17 +307,23 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 		if (frame_type == RANGE_REQUEST_START) {
 			// TODO: check if ranging is possible
 
+			status_code = DISTANCE_RUNNING;
+			ctimer_set(&timeout_timer, MEASUREMENT_TIMEOUT, reset_statemachine, NULL); // setup timeout_timer
+
 			// send RANGE_REQUEST
 			frame_range_basic_t f;
 			f.frame_type = RANGE_REQUEST;
 			memcpy(&f.content.range_request, frame, sizeof(frame_range_request_t));
-			AT86RF233_NETWORK.send(target, sizeof(frame_range_request_t)+1, &f);
+			AT86RF233_NETWORK.send(settings.reflector, sizeof(frame_range_request_t)+1, &f);
 			fsm_state = RANGING_REQUESTED;
 		}
 		else if (frame_type == RANGE_REQUEST) {
 			// TODO: check if ranging is possible
 
 			// TODO: save sent configuration data
+
+			status_code = DISTANCE_RUNNING;
+			ctimer_set(&timeout_timer, MEASUREMENT_TIMEOUT, reset_statemachine, NULL); // setup timeout_timer
 
 			// send RANGE_ACCEPT
 			frame_range_basic_t f;
@@ -255,10 +332,11 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 			f.content.range_accept.reject_reason = 0;
 			f.content.range_accept.accepted_ranging_method = RANGING_METHOD_PMU;
 			f.content.range_accept.accepted_capabilities = 0x00;
-			AT86RF233_NETWORK.send(initiator_requested, sizeof(frame_range_accept_t)+1, &f);
+			AT86RF233_NETWORK.send(settings.initiator, sizeof(frame_range_accept_t)+1, &f);
 			fsm_state = RANGING_ACCEPTED;
 		} else {
 			// all other frames are invalid here
+			status_code = DISTANCE_IDLE;
 		}
 		break;
 	}
@@ -267,22 +345,27 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 	case RANGING_REQUESTED:
 	{
 		if (frame_type == RANGE_ACCEPT) {
+			ctimer_restart(&timeout_timer); // partner sent valid next frame, reset timer
+
 			// send TIME_SYNC_REQUEST
 			frame_range_basic_t f;
 			f.frame_type = TIME_SYNC_REQUEST;
-			AT86RF233_NETWORK.send(target, 1, &f);
+			AT86RF233_NETWORK.send(settings.reflector, 1, &f);
 
-			pmu_magic_initiator();
+			if (pmu_magic(0)) {
+				reset_statemachine(); // DIG2 timed out, abort!
+				ctimer_stop(&timeout_timer);
+			} else {
+				//_delay_ms(10); // wait for reflector to be finished with the magic...
 
-			//_delay_ms(10); // wait for reflector to be finished with the magic...
-
-			// send RESULT_REQUEST
-			frame_range_basic_t f2;
-			f2.frame_type = RESULT_REQUEST;
-			f2.content.result_request.result_data_type = RESULT_TYPE_PMU;
-			f2.content.result_request.result_start_address = 0;
-			AT86RF233_NETWORK.send(target, sizeof(frame_result_request_t)+1, &f2);
-			fsm_state = RESULT_REQUESTED;
+				// send RESULT_REQUEST
+				frame_range_basic_t f2;
+				f2.frame_type = RESULT_REQUEST;
+				f2.content.result_request.result_data_type = RESULT_TYPE_PMU;
+				f2.content.result_request.result_start_address = 0;
+				AT86RF233_NETWORK.send(settings.reflector, sizeof(frame_result_request_t)+1, &f2);
+				fsm_state = RESULT_REQUESTED;
+			}
 		} else {
 			// all other frames are invalid here
 		}
@@ -291,6 +374,8 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 	case RESULT_REQUESTED:
 	{
 		if (frame_type == RESULT_CONFIRM) {
+			ctimer_restart(&timeout_timer); // partner sent valid next frame, reset timer
+
 			// get last results from frame
 			uint16_t last_start = frame->result_confirm.result_start_address;
 			uint16_t result_length = frame->result_confirm.result_length;
@@ -306,12 +391,16 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 			f.frame_type = RESULT_REQUEST;
 			f.content.result_request.result_data_type = RESULT_TYPE_PMU;
 			f.content.result_request.result_start_address = next_start;
-			AT86RF233_NETWORK.send(target, sizeof(frame_result_request_t)+1, &f);
+			AT86RF233_NETWORK.send(settings.reflector, sizeof(frame_result_request_t)+1, &f);
 			if (next_start < PMU_MEASUREMENTS*PMU_SAMPLES) {
 				fsm_state = RESULT_REQUESTED;
 			} else {
-				send_serial(); // all results gathered, send via serial port
+				if (settings.raw_output) {
+					send_serial(); // all results gathered, send via serial port
+				}
 				fsm_state = IDLE;
+				status_code = DISTANCE_IDLE;
+				ctimer_stop(&timeout_timer); // done, stop timer
 			}
 		} else {
 			// all other frames are invalid here
@@ -323,8 +412,14 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 	case RANGING_ACCEPTED:
 	{
 		if (frame_type == TIME_SYNC_REQUEST) {
-			pmu_magic_reflector();
-			fsm_state = WAIT_FOR_RESULT_REQ;
+			ctimer_restart(&timeout_timer); // partner sent valid next frame, reset timer
+
+			if (pmu_magic(1)) {
+				reset_statemachine(); // DIG2 timed out, abort!
+				ctimer_stop(&timeout_timer);
+			} else {
+				fsm_state = WAIT_FOR_RESULT_REQ;
+			}
 		} else {
 			// all other frames are invalid here
 		}
@@ -333,12 +428,16 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 	case WAIT_FOR_RESULT_REQ:
 	{
 		if (frame_type == RESULT_REQUEST) {
+			ctimer_restart(&timeout_timer); // partner sent valid next frame, reset timer
+
 			if (frame->result_request.result_data_type == RESULT_TYPE_PMU) {
 				// send a pmu result frame
 				uint16_t start_address = frame->result_request.result_start_address;
 				if (start_address >= PMU_MEASUREMENTS*PMU_SAMPLES) {
 					// start address points outside of the pmu data, this indicates that the initiator does not need more data
 					fsm_state = IDLE;
+					status_code = DISTANCE_IDLE;
+					ctimer_stop(&timeout_timer); // done, stop timer
 				} else {
 					uint8_t result_length;
 					if (((PMU_MEASUREMENTS*PMU_SAMPLES) - start_address) > RESULT_DATA_LENGTH) {
@@ -353,13 +452,15 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 					f.content.result_confirm.result_start_address = start_address;
 					f.content.result_confirm.result_length = result_length;
 					memcpy(&f.content.result_confirm.result_data, &local_pmu_values[start_address], result_length);
-					AT86RF233_NETWORK.send(initiator_requested, result_length+5, &f);
+					AT86RF233_NETWORK.send(settings.initiator, result_length+5, &f);
 
 					fsm_state = WAIT_FOR_RESULT_REQ; // wait for more result requests
 				}
 			} else {
 				// this can be an RSSI result...
 				fsm_state = IDLE; // no other results allowed, return to idle
+				status_code = DISTANCE_IDLE;
+				ctimer_stop(&timeout_timer); // done, stop timer
 			}
 		} else {
 			// all other frames are invalid here
@@ -373,7 +474,7 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 }
 
 void at86rf233_input(const linkaddr_t *src, uint16_t msg_len, void *msg) {
-	PRINTF("AT86RF233_input: message received!\n");
+	PRINTF("DISTANCE: AT86RF233_input: message received!\n");
 	frame_range_basic_t *frame_basic = msg;
 	uint8_t msg_accepted = 0;
 	switch (frame_basic->frame_type) {
@@ -382,7 +483,7 @@ void at86rf233_input(const linkaddr_t *src, uint16_t msg_len, void *msg) {
 		if (msg_len == sizeof(frame_range_request_t)+1) {
 			// correct message length
 			msg_accepted = 1;
-			linkaddr_copy(&initiator_requested, src);
+			linkaddr_copy(&settings.initiator, src);
 		}
 		break;
 	}
@@ -486,7 +587,7 @@ static void start_timer2(uint8_t max) {
 
 static void wait_for_timer2(uint8_t id) {
 	if (TIFR2 & (1 << OCF2A)) {
-		printf_P(PSTR("ERROR on id %u: TIMER2 compare match missed, timing can be corrupted!\n"), id);
+		printf_P(PSTR("DISTANCE: ERROR on id %u: TIMER2 compare match missed, timing can be corrupted!\n"), id);
 	}
 	while (!(TIFR2 & (1 << OCF2A))){}	// wait for compare match
 	TIFR2 = 0xFF;
@@ -498,7 +599,7 @@ static int8_t wait_for_dig2(void) {
 	// wait for DIG2
 	uint16_t cnt0 = 1;	// this counts up while waiting for the signal, when it overflows the measurement is aborted
 	uint16_t cnt1 = 1;	// this counts up while waiting for the signal, when it overflows the measurement is aborted
-	while ((PINB & (1<<PB0)) == 0) {	// TODO: define this input pin in the platform
+	while ((DIG2_PIN & (1<<DIG2_PIN_BIT)) == 0) {	// TODO: define this input pin in the platform
 		cnt0++;
 		if (cnt0 == 0) {
 			return -1;	// signal never went low, abort measurement
@@ -527,7 +628,7 @@ uint8_t rg_cc_ctrl_0;
 
 static void backup_registers(void) {
 	// backup radio state
-	rf230_state = radio_get_trx_state();
+	rf230_state = hal_subregister_read(SR_TRX_STATUS);
 
 	rg_phy_tx_pwr = hal_register_read(RG_PHY_TX_PWR);
 	rg_xah_ctrl_1 = hal_register_read(RG_XAH_CTRL_1);
@@ -610,92 +711,19 @@ static void receiver_pmu(uint8_t* pmu_values) {
 	}
 }
 
-static void pmu_magic_initiator() {
-	PRINTF("entered PMU Initiator\n");
-
-	leds_off(2);
-	leds_off(1);
-
-	AT86RF233_ENTER_CRITICAL_REGION();
-	watchdog_stop();
-	backup_registers();
-
-	init_timer2();
-
-	hal_subregister_write(SR_TX_PWR, 0xF);			// set TX output power to -17dBm to avoid reflections
-	hal_register_read(RG_IRQ_STATUS);				// clear all pending interrupts
-	hal_subregister_write(SR_ARET_TX_TS_EN, 0x1);	// signal frame transmission via DIG2
-	hal_subregister_write(SR_IRQ_2_EXT_EN, 0x1);	// enable time stamping via DIG2
-
-	// wait for sync signal
-	wait_for_dig2();
-	start_timer2(18);					// timer counts to 18, we have 580us between synchronization points
-	leds_off(2);
-
-	// now in sync with the reflector
-
-	hal_subregister_write(SR_TX_RX, 0);			// RX PLL frequency is selected
-	hal_subregister_write(SR_RX_PDT_DIS, 1);	// RX Path is disabled
-
-	hal_subregister_write(SR_PMU_EN, 1);		// enable PMU
-	hal_subregister_write(SR_MOD_SEL, 1);		// manual control of modulation data
-	hal_subregister_write(SR_MOD, 0);			// continuous 0 chips for modulation
-	hal_subregister_write(SR_TX_RX_SEL, 1);		// manual control of PLL frequency mode
-
-	wait_for_timer2(1);
-
-	// TODO: maybe add a function to HAL that writes only zeros to FB to save memory?
-	uint8_t fb_data[127] = {0};					// setup a framebuffer with all zeroes
-	// TODO: setting the FB to zeros does not seem toimpact the measurement, maybe remove it completely?
-	hal_frame_write(fb_data, 127);				// copy data to sram, framebuffer section
-
-	// antenna diversity control is skipped, we only have one antenna
-
-	wait_for_timer2(2);
-
-	// measure RSSI
-	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
-	hal_register_write(RG_TRX_STATE, CMD_RX_ON);
-
-	_delay_us(50); // wait some time for sender to be ready...
-
-	uint8_t rssi = hal_subregister_read(SR_RSSI);
-	hal_register_write(RG_TST_AGC, 0x09);		// TODO: set gain according to rssi
-
-	wait_for_timer2(3);
-
-	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
-	hal_register_write(RG_TRX_STATE, CMD_TX_START);
-
-	wait_for_timer2(4);
-	start_timer2(10);					// timer counts to 10, we have 336us between synchronization points
-
-	uint8_t i;
-	for (i=0; i < PMU_MEASUREMENTS; i++) {
-		setFrequency(2322 + (i * PMU_STEP), 0);
-		receiver_pmu(&local_pmu_values[i*PMU_SAMPLES]);
-		sender_pmu();
-		wait_for_timer2(5);
+// unified version of pmu magic
+// type == 0: initiator
+// else: reflector
+static int8_t pmu_magic(uint8_t type) {
+	switch (type) {
+	case 0:		// initiator
+		PRINTF("DISTANCE: entered PMU Initiator\n");
+		break;
+	default:	// reflector
+		PRINTF("DISTANCE: entered PMU Reflector\n");
+		break;
 	}
 
-//	wait_for_timer2(6);
-//
-//	printf("rssi: %u\n", rssi);
-//
-//	uint8_t j;
-//	for (j = 0; j < PMU_MEASUREMENTS; j++) {
-//		for (i = 0; i < PMU_SAMPLES; i++) {
-//			printf("pmu[%u][%u]: %u\n", j, i, local_pmu_values[j][i]);
-//		}
-//	}
-
-	restore_initial_status();
-	AT86RF233_LEAVE_CRITICAL_REGION();
-}
-
-static void pmu_magic_reflector() {
-	PRINTF("entered PMU Reflector\n");
-
 	leds_off(2);
 	leds_off(1);
 
@@ -709,42 +737,64 @@ static void pmu_magic_reflector() {
 	hal_register_read(RG_IRQ_STATUS);				// clear all pending interrupts
 	hal_subregister_write(SR_ARET_TX_TS_EN, 0x1);	// signal frame transmission via DIG2
 	hal_subregister_write(SR_IRQ_2_EXT_EN, 0x1);	// enable time stamping via DIG2
+
+	// this line is normally only done at the reflector:
 	hal_subregister_write(SR_TOM_EN, 0x0);			// disable TOM mode (unclear why this is done here)
 
-	// send PMU start
-	frame_range_basic_t f;
-	f.frame_type = PMU_START;
-	//AT86RF233_NETWORK.send(initiator_requested, 1, &f);
+	// reflector sends the synchronization frame
+	if (type) {
+		// send PMU start
+		frame_range_basic_t f;
+		f.frame_type = PMU_START;
 
-	// send PMU start on bare metal, as the normal protocol stack is too slow for us to be able to see the DIG2 signal
-	//packetbuf_copyfrom(&f, 1);
-	//packetbuf_set_addr(PACKETBUF_ADDR_RECEIVER, &initiator_requested);
-	//packetbuf_set_addr(PACKETBUF_ADDR_SENDER, &linkaddr_node_addr);
-	//packetbuf_compact();
+		// TODO: send the correct frame here, just to sleep well...
 
-	_delay_ms(2); // wait for initiator, it needs more time before it listens to DIG2
+		//AT86RF233_NETWORK.send(initiator_requested, 1, &f);
 
-	hal_subregister_write(SR_TRX_CMD, CMD_TX_ARET_ON);
-	hal_set_slptr_low();
-	hal_set_slptr_high(); // send the packet at the latest time possible
+		// send PMU start on bare metal, as the normal protocol stack is too slow for us to be able to see the DIG2 signal
+		//packetbuf_copyfrom(&f, 1);
+		//packetbuf_set_addr(PACKETBUF_ADDR_RECEIVER, &initiator_requested);
+		//packetbuf_set_addr(PACKETBUF_ADDR_SENDER, &linkaddr_node_addr);
+		//packetbuf_compact();
 
+		_delay_ms(2); // wait for initiator, it needs more time before it listens to DIG2
+
+		hal_subregister_write(SR_TRX_CMD, CMD_TX_ARET_ON);
+		hal_set_slptr_low();
+		hal_set_slptr_high(); // send the packet at the latest time possible
+	}
 
 	// wait for sync signal
-	wait_for_dig2();
-	_delay_us(9.5243);					// DIG2 signal is on average 9.5243 us delayed on the other node
-	start_timer2(18);					// timer counts to 18, we have 580us between synchronization points
+	if (wait_for_dig2()) {
+		// DIG2 signal not found, abort measurement
+		// to be honest: if the reflector does not get the DIG2 from its own sending
+		// there must be something horribly wrong...
+		return -1;
+	}
+	if (type) {
+		_delay_us(9.5243);	// DIG2 signal is on average 9.5243 us delayed on the initiator, reflector waits
+	}
+	start_timer2(18);		// timer counts to 18, we have 580us between synchronization points
 	leds_off(2);
 
-	// now in sync with the initiator
+	// now in sync with the other node
 
-	hal_subregister_write(SR_PMU_IF_INVERSE, 1);// Inverse IF position
-	hal_subregister_write(SR_TX_RX, 1);			// TX PLL frequency is selected
+	switch (type) {
+	case 0:		// initiator
+		hal_subregister_write(SR_TX_RX, 0);				// RX PLL frequency is selected
+		break;
+	default:	// reflector
+		hal_subregister_write(SR_PMU_IF_INVERSE, 1);	// Inverse IF position
+		hal_subregister_write(SR_TX_RX, 1);				// TX PLL frequency is selected
+		break;
+	}
+
 	hal_subregister_write(SR_RX_PDT_DIS, 1);	// RX Path is disabled
-
 	hal_subregister_write(SR_PMU_EN, 1);		// enable PMU
 	hal_subregister_write(SR_MOD_SEL, 1);		// manual control of modulation data
 	hal_subregister_write(SR_MOD, 0);			// continuous 0 chips for modulation
 	hal_subregister_write(SR_TX_RX_SEL, 1);		// manual control of PLL frequency mode
+
 
 	wait_for_timer2(1);
 
@@ -758,44 +808,62 @@ static void pmu_magic_reflector() {
 	wait_for_timer2(2);
 
 	// measure RSSI
+	uint8_t rssi;
 	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
-	hal_register_write(RG_TRX_STATE, CMD_TX_START);
+	switch (type) {
+	case 0:		// initiator
+		hal_register_write(RG_TRX_STATE, CMD_RX_ON);
+		_delay_us(50); // wait some time for sender to be ready...
+		rssi = hal_subregister_read(SR_RSSI);
+		break;
+	default:	// reflector
+		hal_register_write(RG_TRX_STATE, CMD_TX_START);
+		break;
+	}
 
 	wait_for_timer2(3);
 
 	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
-	hal_register_write(RG_TRX_STATE, CMD_RX_ON);
+	switch (type) {
+	case 0:		// initiator
+		hal_register_write(RG_TRX_STATE, CMD_TX_START);
+		break;
+	default:	// reflector
+		hal_register_write(RG_TRX_STATE, CMD_RX_ON);
+		_delay_us(50); // wait some time for sender to be ready...
+		rssi = hal_subregister_read(SR_RSSI);
+		break;
+	}
 
-	_delay_us(50); // wait some time for sender to be ready...
-
-	uint8_t rssi = hal_subregister_read(SR_RSSI);
-	hal_register_write(RG_TST_AGC, 0x09);		// TODO: set gain according to rssi
+	// TODO: set gain according to rssi
+	hal_register_write(RG_TST_AGC, 0x09);
 
 	wait_for_timer2(4);
 	start_timer2(10);					// timer counts to 10, we have 336us between synchronization points
 
 	uint8_t i;
 	for (i=0; i < PMU_MEASUREMENTS; i++) {
-		setFrequency(2322 + (i * PMU_STEP), 1);
-		sender_pmu();
-		receiver_pmu(&local_pmu_values[i*PMU_SAMPLES]);
+		switch (type) {
+		case 0:		// initiator
+			setFrequency(2322 + (i * PMU_STEP), 0);
+			receiver_pmu(&local_pmu_values[i*PMU_SAMPLES]);
+			sender_pmu();
+			break;
+		default:	// reflector
+			setFrequency(2322 + (i * PMU_STEP), 1);
+			sender_pmu();
+			receiver_pmu(&local_pmu_values[i*PMU_SAMPLES]);
+			break;
+		}
 		wait_for_timer2(5);
 	}
 
-//	wait_for_timer2(6);
-//
-//	printf("rssi: %u\n", rssi);
-//
-//	uint8_t j;
-//	for (j = 0; j < PMU_MEASUREMENTS; j++) {
-//		for (i = 0; i < PMU_SAMPLES; i++) {
-//			printf("pmu[%u][%u]: %u\n", j, i, local_pmu_values[j][i]);
-//		}
-//	}
-
 	restore_initial_status();
 	AT86RF233_LEAVE_CRITICAL_REGION();
+
+	return 0;
 }
+
 /*---------------------------------------------------------------------------*/
 /* This process manages a range measurement.
  * It is run at the initiator node and ensures that the measurement runs
@@ -809,9 +877,9 @@ PROCESS_THREAD(ranging_process, ev, data)
 {
 	PROCESS_BEGIN();
 
-	// check if the target address is set
-	if (linkaddr_cmp(&target, &linkaddr_null)) {
-		// no target address is set, ranging not possible
+	// check if the reflector address is set
+	if (linkaddr_cmp(&settings.reflector, &linkaddr_null)) {
+		// no reflector address is set, ranging not possible
 		return 0;
 	}
 
@@ -821,20 +889,18 @@ PROCESS_THREAD(ranging_process, ev, data)
 	frame_subframe_t reqframe;
 
 	reqframe.range_request.ranging_method = RANGING_METHOD_PMU;
-	reqframe.range_request.f0_start = 25000;
-	reqframe.range_request.f0_stop = 28000;
-	reqframe.range_request.f1_start = 0;
-	reqframe.range_request.f1_stop = 0;
-	reqframe.range_request.f2_start = 0;
-	reqframe.range_request.f2_stop = 0;
-	reqframe.range_request.f3_start = 0;
-	reqframe.range_request.f3_stop = 0;
-	reqframe.range_request.f4_start = 0;
-	reqframe.range_request.f4_stop = 0;
-	reqframe.range_request.f_step = 5;
+
+	// copy frequency bands
+	uint8_t i;
+	for (i = 0; i < DISTANCE_FREQUENCY_BANDS; i++) {
+		reqframe.range_request.f_start[i] = settings.f_start[i];
+		reqframe.range_request.f_stop[i] = settings.f_stop[i];
+	}
+
+	reqframe.range_request.f_step = settings.f_step;
 	reqframe.range_request.capabilities = 0x00;
 
-	fsm_state = IDLE;
+	fsm_state = IDLE; // hard reset the statemachine, maybe it is stuck in some timed out measurement
 
 	statemachine(RANGE_REQUEST_START, &reqframe);
 
@@ -842,7 +908,7 @@ PROCESS_THREAD(ranging_process, ev, data)
 		PROCESS_PAUSE();
 	}
 
-	printf("ranging finished\n");
+	// TODO: start calculation of distance
 
 	PROCESS_END();
 }

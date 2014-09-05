@@ -93,6 +93,10 @@ typedef unsigned long off_t;
 #define LEDS_CONF_GREEN         0x20
 #define LEDS_CONF_YELLOW        0x80
 
+/* Pin for DIG2 signal from AT86RF233 */
+#define DIG2_PIN                PINB
+#define DIG2_PIN_BIT            PB0
+
 /* micro SD ports */
 #define MICRO_SD_PWR_PORT       PORTA
 #define MICRO_SD_PWR_PORT_DDR   DDRA

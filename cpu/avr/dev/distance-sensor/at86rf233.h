@@ -51,6 +51,7 @@
 
 #include "stdint.h"
 #include "at86rf233-network.h"
+#include "distance-sensor.h"
 
 #ifndef AT86RF233_NETWORK
 #ifdef AT86RF233_CONF_NETWORK
@@ -85,16 +86,8 @@
 
 typedef struct {
 	uint8_t  ranging_method;
-	uint16_t f0_start;
-	uint16_t f0_stop;
-	uint16_t f1_start;
-	uint16_t f1_stop;
-	uint16_t f2_start;
-	uint16_t f2_stop;
-	uint16_t f3_start;
-	uint16_t f3_stop;
-	uint16_t f4_start;
-	uint16_t f4_stop;
+	uint16_t f_start[DISTANCE_FREQUENCY_BANDS];
+	uint16_t f_stop[DISTANCE_FREQUENCY_BANDS];
 	uint8_t  f_step;
 	uint8_t  capabilities;
 } frame_range_request_t;
@@ -138,9 +131,17 @@ uint8_t at86rf233_init(void);
 
 uint8_t at86rf233_deinit(void);
 
+int8_t at86rf233_get_status();
+
 uint8_t at86rf233_start_ranging(void);
 
 uint8_t at86rf233_set_target(linkaddr_t* addr);
+
+uint8_t at86rf233_set_frequencies(frequency_bands_t *f);
+
+uint8_t at86rf233_set_fstep(uint8_t fstep);
+
+uint8_t at86rf233_set_raw_output(uint8_t raw);
 
 /**
  * \brief coap_input

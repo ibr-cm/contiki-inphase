@@ -62,7 +62,7 @@ status(int type)
     case SENSORS_ACTIVE:
       return initialized;
     case SENSORS_READY:
-      return ready;
+      return at86rf233_get_status();
   }
   return 0;
 }
@@ -100,6 +100,18 @@ configure(int type, int c)
     case DISTANCE_TARGET:
     	at86rf233_set_target(c);
     	return 0;
+
+    case DISTANCE_RAW_OUTPUT:
+		at86rf233_set_raw_output(c);
+		return 0;
+
+    case DISTANCE_FREQUENCIES:
+		at86rf233_set_frequencies(c);
+		return 0;
+
+    case DISTANCE_FREQ_STEP:
+		at86rf233_set_fstep(c);
+		return 0;
 
     case DISTANCE_START:
     	return at86rf233_start_ranging();

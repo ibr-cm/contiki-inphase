@@ -55,6 +55,13 @@ extern const struct sensors_sensor distance_sensor;
 
 #define DISTANCE_SENSOR "Distance"
 
+#define DISTANCE_FREQUENCY_BANDS 5
+
+typedef struct {
+	uint16_t f_start[DISTANCE_FREQUENCY_BANDS];
+	uint16_t f_stop[DISTANCE_FREQUENCY_BANDS];
+} frequency_bands_t;
+
 // Values to read
 #define DISTANCE_LAST_DIST_METER        0
 #define DISTANCE_LAST_DIST_CENTIMETER   1
@@ -70,18 +77,22 @@ extern const struct sensors_sensor distance_sensor;
 // output raw measurement data on stdout at initiator node for post-processing
 #define DISTANCE_RAW_OUTPUT	   3
 
-// Status codes
+#define DISTANCE_FREQUENCIES   4
 
-// no measurement running, idle
-#define DISTANCE_IDLE      0
+#define DISTANCE_FREQ_STEP     5
+
+// Status codes for SENSORS_READY
+#define DISTANCE_INVALID   0
+// no measurement running, idle, ready for measurement
+#define DISTANCE_IDLE      1
 // measurement is currently running
-#define DISTANCE_RUNNING   1
+#define DISTANCE_RUNNING   2
 // measurement failed to unknown reasons
-#define DISTANCE_FAILED    2
+#define DISTANCE_FAILED    3
 // this sensor node has no AT86RF233 radio, measurement not possible
-#define DISTANCE_NO_RF233  3
+#define DISTANCE_NO_RF233  4
 // communication with reflector timed out
-#define DISTANCE_TIMEOUT   4
+#define DISTANCE_TIMEOUT   5
 
 #endif /* __DISTANCE_SENSOR_H__ */
 
