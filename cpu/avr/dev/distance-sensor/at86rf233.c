@@ -189,9 +189,12 @@ void at86rf233_statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 			at86rf233_pmuMagicInitiator();
 
 			// send RESULT_REQUEST
+			frame_range_basic_t f2;
+			f2.frame_type = RESULT_REQUEST;
+			f2.content.result_request.result_data_type = RESULT_TYPE_PMU;
+			f2.content.result_request.result_start_address = 0;
+			AT86RF233_NETWORK.send(target, sizeof(frame_result_request_t)+1, &f2);
 			fsm_state = RESULT_REQUESTED;
-
-			fsm_state = IDLE;				// results are not implemented yet
 		} else {
 			// all other frames are invalid here
 		}
@@ -200,8 +203,27 @@ void at86rf233_statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 	case RESULT_REQUESTED:
 	{
 		if (frame_type == RESULT_CONFIRM) {
-			// send RESULT_REQUEST
-			fsm_state = RESULT_REQUESTED;
+			// get last results from frame
+			uint16_t last_start = frame->result_confirm.result_start_address;
+			uint16_t result_length = frame->result_confirm.result_length;
+			uint16_t i;
+			for (i = 0; i < result_length; i++) {
+				remote_pmu_values[i+last_start] = frame->result_confirm.result_data[i];
+			}
+
+			uint16_t next_start = last_start + result_length;
+
+			// send RESULT_REQUEST if more results are needed
+			frame_range_basic_t f;
+			f.frame_type = RESULT_REQUEST;
+			f.content.result_request.result_data_type = RESULT_TYPE_PMU;
+			f.content.result_request.result_start_address = next_start;
+			AT86RF233_NETWORK.send(target, sizeof(frame_result_request_t)+1, &f);
+			if (next_start < PMU_MEASUREMENTS*PMU_SAMPLES) {
+				fsm_state = RESULT_REQUESTED;
+			} else {
+				fsm_state = IDLE;
+			}
 		} else {
 			// all other frames are invalid here
 		}
@@ -214,8 +236,6 @@ void at86rf233_statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 		if (frame_type == TIME_SYNC_REQUEST) {
 			at86rf233_pmuMagicReflector();
 			fsm_state = WAIT_FOR_RESULT_REQ;
-
-			fsm_state = IDLE;				// results are not implemented yet
 		} else {
 			// all other frames are invalid here
 		}
@@ -224,8 +244,34 @@ void at86rf233_statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 	case WAIT_FOR_RESULT_REQ:
 	{
 		if (frame_type == RESULT_REQUEST) {
-			// send RESULT_CONFIRM
-			fsm_state = WAIT_FOR_RESULT_REQ; // wait for more result requests
+			if (frame->result_request.result_data_type == RESULT_TYPE_PMU) {
+				// send a pmu result frame
+				uint16_t start_address = frame->result_request.result_start_address;
+				if (start_address >= PMU_MEASUREMENTS*PMU_SAMPLES) {
+					// start address points outside of the pmu data, this indicates that the initiator does not need more data
+					fsm_state = IDLE;
+				} else {
+					uint8_t result_length;
+					if (((PMU_MEASUREMENTS*PMU_SAMPLES) - start_address) > RESULT_DATA_LENGTH) {
+						result_length = RESULT_DATA_LENGTH;
+					} else {
+						result_length = (PMU_MEASUREMENTS*PMU_SAMPLES) - start_address;
+					}
+
+					frame_range_basic_t f;
+					f.frame_type = RESULT_CONFIRM;
+					f.content.result_confirm.result_data_type = RESULT_TYPE_PMU;
+					f.content.result_confirm.result_start_address = start_address;
+					f.content.result_confirm.result_length = result_length;
+					memcpy(&f.content.result_confirm.result_data, local_pmu_values[start_address], result_length);
+					AT86RF233_NETWORK.send(initiator_requested, result_length+5, &f);
+
+					fsm_state = WAIT_FOR_RESULT_REQ; // wait for more result requests
+				}
+			} else {
+				// this can be an RSSI result...
+				fsm_state = IDLE; // no other results allowed, return to idle
+			}
 		} else {
 			// all other frames are invalid here
 		}
@@ -238,6 +284,7 @@ void at86rf233_statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 }
 
 void at86rf233_input(const linkaddr_t *src, uint16_t msg_len, void *msg) {
+	printf("AT86RF233_input: message received!\n");
 	frame_range_basic_t *frame_basic = msg;
 	uint8_t msg_accepted = 0;
 	switch (frame_basic->frame_type) {
@@ -285,7 +332,7 @@ void at86rf233_input(const linkaddr_t *src, uint16_t msg_len, void *msg) {
 	case RESULT_CONFIRM:
 	{
 		frame_result_confirm_t *frame_result = &frame_basic->content.result_confirm;
-		if (msg_len == (frame_result->result_length + 3)) {
+		if (msg_len == (frame_result->result_length + 5)) {
 			// correct message length
 			msg_accepted = 1;
 		}
@@ -298,8 +345,6 @@ void at86rf233_input(const linkaddr_t *src, uint16_t msg_len, void *msg) {
 	if (msg_accepted) {
 		at86rf233_statemachine(frame_basic->frame_type, &frame_basic->content);
 	}
-
-	printf("AT86RF233_input: message received!\n");
 }
 
 /*---------------------------------------------------------------------------*/

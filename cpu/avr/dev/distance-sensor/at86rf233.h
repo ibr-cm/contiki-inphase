@@ -81,6 +81,8 @@
 #define RESULT_TYPE_PMU          0x00
 #define RESULT_TYPE_RSSI         0x01
 
+#define RESULT_DATA_LENGTH       100
+
 typedef struct {
 	uint8_t  ranging_method;
 	uint16_t f0_start;
@@ -112,8 +114,8 @@ typedef struct {
 typedef struct {
 	uint8_t  result_data_type;
 	uint16_t result_start_address;
-	uint16_t result_length;
-	void  *result_data;
+	uint8_t result_length;
+	uint8_t result_data[RESULT_DATA_LENGTH];
 } frame_result_confirm_t;
 
 typedef union {

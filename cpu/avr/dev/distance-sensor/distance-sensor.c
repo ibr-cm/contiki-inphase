@@ -102,6 +102,7 @@ configure(int type, int c)
     	return 0;
 
     case DISTANCE_START:
+    	// TODO: only allow this when no other measurement is running
     	at86rf233_startRanging();
     	return 0;
 
