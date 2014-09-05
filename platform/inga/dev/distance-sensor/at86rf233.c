@@ -226,6 +226,8 @@ uint8_t at86rf233_start_ranging(void) {
 		return 1;
 	}
 
+	status_code = DISTANCE_RUNNING;
+
 	// ranging process is not running, ranging is possible
 	process_start(&ranging_process, NULL);
 	return 0;
@@ -1040,14 +1042,13 @@ PROCESS_THREAD(ranging_process, ev, data)
 		return 0;
 	}
 
-	status_code = DISTANCE_RUNNING;
-
 	// start a range measurement
 	frame_subframe_t reqframe;
 
 	reqframe.range_request.ranging_method = RANGING_METHOD_PMU;
 	reqframe.range_request.capabilities = 0x00;
 
+	ctimer_stop(&timeout_timer);
 	fsm_state = IDLE; // hard reset the statemachine, maybe it is stuck in some timed out measurement
 
 	statemachine(RANGE_REQUEST_START, &reqframe);
