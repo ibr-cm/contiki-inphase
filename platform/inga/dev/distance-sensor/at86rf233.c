@@ -977,7 +977,7 @@ static int8_t pmu_magic(pmu_magic_role_t role, pmu_magic_mode_t mode) {
 		// reflector will not disturb the next measurement of the reflector
 		uint8_t fb_data[5];
 		hal_sram_read(12, 5, fb_data);
-		uint8_t i;
+		//uint8_t i;
 		//printf("\n");
 		//for (i = 0; i < 5; i++) {
 		//	printf("%x ", fb_data[i]);
