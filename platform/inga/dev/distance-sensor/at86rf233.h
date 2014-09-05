@@ -121,6 +121,15 @@ typedef struct {
 	frame_subframe_t content;
 } frame_range_basic_t;
 
+typedef enum {
+	PMU_MAGIC_MODE_CLASSIC
+} pmu_magic_mode_t;
+
+typedef enum {
+	PMU_MAGIC_ROLE_INITIATOR,
+	PMU_MAGIC_ROLE_REFLECTOR
+} pmu_magic_role_t;
+
 extern const struct at86rf233_network AT86RF233_NETWORK;
 
 uint8_t at86rf233_available(void);

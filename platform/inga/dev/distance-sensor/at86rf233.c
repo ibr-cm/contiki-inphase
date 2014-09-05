@@ -123,7 +123,9 @@
 PROCESS(ranging_process, "AT86RF233 Ranging process");
 
 static void statemachine(uint8_t frame_type, frame_subframe_t *frame);
-static int8_t pmu_magic(uint8_t type);
+static int8_t pmu_magic(pmu_magic_role_t role, pmu_magic_mode_t mode);
+
+void pmu_magic_mode_classic(pmu_magic_role_t role);
 
 uint8_t status_code;
 uint8_t next_status_code;
@@ -312,6 +314,8 @@ static void send_serial(void) {
 	binary_send_byte(status_code);
 
 	// transmit data
+	/* TODO: PMU_MEASUREMENTS is uint16_t, binary_send_data() allows only uint8_t as
+	 * size */
 	binary_send_data(local_pmu_values, PMU_MEASUREMENTS);
 
     binary_end_frame();
@@ -386,7 +390,7 @@ static void trigger_network_timeout(void *ptr) {
 
 static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 
-	PRINTF("DISTANCE: state: frame_type: %u, fsm_state: %u\n", frame_type, fsm_state);
+	PRINTF("DISTANCE: state: frame_type: 0x%x, fsm_state: %u\n", frame_type, fsm_state);
 
 	switch (fsm_state) {
 	case IDLE:
@@ -436,7 +440,7 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 			send_time_sync_request();
 
 			// NOTE: pmu_magic at reflector sends sync frame as response to TIME_SYMC_REQUEST
-			int8_t pmu_magic_result = pmu_magic(0);
+			int8_t pmu_magic_result = pmu_magic(PMU_MAGIC_ROLE_INITIATOR, PMU_MAGIC_MODE_CLASSIC);
 			if (pmu_magic_result) {
 				next_status_code = DISTANCE_NO_SYNC;
 				reset_statemachine(); // DIG2 timed out, abort!
@@ -507,7 +511,7 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 		} else if (frame_type == TIME_SYNC_REQUEST) {
 			ctimer_stop(&timeout_timer); // stop timer for pmu_magic
 
-			int8_t pmu_magic_result = pmu_magic(1);
+			int8_t pmu_magic_result = pmu_magic(PMU_MAGIC_ROLE_REFLECTOR, PMU_MAGIC_MODE_CLASSIC);
 			if (pmu_magic_result) {
 				next_status_code = DISTANCE_NO_SYNC;
 				reset_statemachine(); // DIG2 timed out, abort!
@@ -873,19 +877,21 @@ static void receiver_pmu(uint8_t* pmu_values) {
 }
 
 // unified version of pmu magic
-// type == 0: initiator
-// else: reflector
-static int8_t pmu_magic(uint8_t type) {
+static int8_t pmu_magic(pmu_magic_role_t role, pmu_magic_mode_t mode) {
 	int8_t ret_val;
 
-	switch (type) {
-	case 0:		// initiator
+	switch (role) {
+	case PMU_MAGIC_ROLE_INITIATOR:		// initiator
 		PRINTF("DISTANCE: entered PMU Initiator\n");
 		break;
-	default:	// reflector
+	case PMU_MAGIC_ROLE_REFLECTOR:	// reflector
 		PRINTF("DISTANCE: entered PMU Reflector\n");
 		break;
+	default:	// unknown role
+		PRINTF("DISTANCE: WARNING unknown role selected. Continue as Reflector\n");
+		break;
 	}
+	PRINTF("DISTANCE: PMU mode 0x%x\n", (uint8_t) mode);
 
 	AT86RF233_ENTER_CRITICAL_REGION();
 
@@ -918,7 +924,7 @@ static int8_t pmu_magic(uint8_t type) {
 	hal_subregister_write(SR_TOM_EN, 0x0);			// disable TOM mode (unclear why this is done here)
 
 	// reflector sends the synchronization frame
-	if (type) {
+	if (role == PMU_MAGIC_ROLE_REFLECTOR) {
 		// send PMU start
 
 		// TODO: send the correct frame here, just to sleep well...
@@ -943,7 +949,7 @@ static int8_t pmu_magic(uint8_t type) {
 
 	// wait for sync signal
 	if (!wait_for_dig2()) {
-		if (type) {
+		if (role == PMU_MAGIC_ROLE_REFLECTOR) {
 			_delay_us(9.5243);	// DIG2 signal is on average 9.5243 us delayed on the initiator, reflector waits
 		}
 		start_timer2(7);		// timer counts to 7, we have 244us between synchronization points
@@ -951,8 +957,8 @@ static int8_t pmu_magic(uint8_t type) {
 
 		// now in sync with the other node
 
-		switch (type) {
-		case 0:		// initiator
+		switch (role) {
+		case PMU_MAGIC_ROLE_INITIATOR:		// initiator
 			hal_subregister_write(SR_TX_RX, 0);				// RX PLL frequency is selected
 			break;
 		default:	// reflector
@@ -982,8 +988,8 @@ static int8_t pmu_magic(uint8_t type) {
 		// measure RSSI
 		uint8_t rssi;
 		hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
-		switch (type) {
-		case 0:		// initiator
+		switch (role) {
+		case PMU_MAGIC_ROLE_INITIATOR:		// initiator
 			hal_register_write(RG_TRX_STATE, CMD_RX_ON);
 			_delay_us(50); // wait some time for sender to be ready...
 			rssi = hal_subregister_read(SR_RSSI);
@@ -996,8 +1002,8 @@ static int8_t pmu_magic(uint8_t type) {
 		wait_for_timer2(3);
 
 		hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
-		switch (type) {
-		case 0:		// initiator
+		switch (role) {
+		case PMU_MAGIC_ROLE_INITIATOR:		// initiator
 			hal_register_write(RG_TRX_STATE, CMD_TX_START);
 			break;
 		default:	// reflector
@@ -1012,41 +1018,13 @@ static int8_t pmu_magic(uint8_t type) {
 
 		wait_for_timer2(4);
 
-		uint8_t i;
-		for (i=0; i < PMU_MEASUREMENTS; i++) {
-			/*switch (type) {
-			case 0:		// initiator
-				setFrequency(PMU_START_FREQUENCY + (i * PMU_STEP), 0);
-				receiver_pmu(&local_pmu_values[i]);
-				sender_pmu();
-				break;
-			default:	// reflector
-				setFrequency(PMU_START_FREQUENCY + (i * PMU_STEP), 1);
-				sender_pmu();
-				receiver_pmu(&local_pmu_values[i]);
-				break;
-			}*/
-			// use 500 kHz spacing
-			uint8_t f, f_full, f_half;
-			switch (type) {
-			case 0:		// initiator
-				f = i;
-				f_full = f >> 1;
-				f_half = f & 0x01;
-				setFrequency(PMU_START_FREQUENCY + f_full, f_half);
-				receiver_pmu(&local_pmu_values[i]);
-				sender_pmu();
-				break;
-			default:	// reflector
-				f = i + 1; // reflector is 500 kHz higher
-				f_full = f >> 1;
-				f_half = f & 0x01;
-				setFrequency(PMU_START_FREQUENCY + f_full, f_half);
-				sender_pmu();
-				receiver_pmu(&local_pmu_values[i]);
-				break;
-			}
-			wait_for_timer2(5);
+		switch(mode) {
+		case PMU_MAGIC_MODE_CLASSIC:
+			pmu_magic_mode_classic(role);
+			break;
+		default:
+			pmu_magic_mode_classic(role);
+			break;
 		}
 		ret_val = 0;
 	} else {
@@ -1069,6 +1047,45 @@ static int8_t pmu_magic(uint8_t type) {
 	AT86RF233_LEAVE_CRITICAL_REGION();
 
 	return ret_val;
+}
+
+void pmu_magic_mode_classic(pmu_magic_role_t role) {
+	uint8_t i;
+	for (i=0; i < PMU_MEASUREMENTS; i++) {
+		/*switch (type) {
+		case 0:		// initiator
+			setFrequency(PMU_START_FREQUENCY + (i * PMU_STEP), 0);
+			receiver_pmu(&local_pmu_values[i]);
+			sender_pmu();
+			break;
+		default:	// reflector
+			setFrequency(PMU_START_FREQUENCY + (i * PMU_STEP), 1);
+			sender_pmu();
+			receiver_pmu(&local_pmu_values[i]);
+			break;
+		}*/
+		// use 500 kHz spacing
+		uint8_t f, f_full, f_half;
+		switch (role) {
+		case PMU_MAGIC_ROLE_INITIATOR:		// initiator
+			f = i;
+			f_full = f >> 1;
+			f_half = f & 0x01;
+			setFrequency(PMU_START_FREQUENCY + f_full, f_half);
+			receiver_pmu(&local_pmu_values[i]);
+			sender_pmu();
+			break;
+		default:	// reflector
+			f = i + 1; // reflector is 500 kHz higher
+			f_full = f >> 1;
+			f_half = f & 0x01;
+			setFrequency(PMU_START_FREQUENCY + f_full, f_half);
+			sender_pmu();
+			receiver_pmu(&local_pmu_values[i]);
+			break;
+		}
+		wait_for_timer2(5);
+	}
 }
 
 /*---------------------------------------------------------------------------*/
