@@ -70,14 +70,11 @@
 #define PMU_START_FREQUENCY 2400		// start frequency for measurement
 #define PMU_MEASUREMENTS 200			// number of frequencies to measure
 
-// calibration values for quadratic
-#define PMU_CALIB_X2 77.515678989k		// quadratic part
-#define PMU_CALIB_X  132.76889372k		// linear part
-#define PMU_CALIB_B  0.59048228802k		// constant part
-
-//#define PMU_DIST_OFFSET 1.092k			// distance offset from hardware (meter)
-#define PMU_DIST_OFFSET 3.342k			// distance offset from hardware (meter)
-#define PMU_DIST_SLOPE	149.896229k		// slope calculated from sample distance
+// parameters for distance computation
+#define SPEED_OF_LIGHT 299792458  // speed of light
+#define DEFAULT_FREQ_SPACING 0.5
+#define WAVELENGTH SPEED_OF_LIGHT / (DEFAULT_FREQ_SPACING * 1e6) * 0.5
+#define D_PER_BIN WAVELENGTH / FFT_N
 
 // configuration of signaling on the LEDs
 // LEDs can be disabled to enabled measurement of power consumption
@@ -132,7 +129,7 @@ uint8_t next_result_start;
 
 uint8_t dist_last_meter = 0;
 uint8_t dist_last_centimeter = 0;
-uint8_t dist_last_quality = 0;
+uint16_t dist_last_quality = 0;
 
 struct {
 	linkaddr_t reflector;						// address of the reflector
@@ -216,7 +213,7 @@ uint8_t at86rf233_get_dist_centimeter() {
 	return dist_last_centimeter;
 }
 
-uint8_t at86rf233_get_quality() {
+uint16_t at86rf233_get_quality() {
 	return dist_last_quality;
 }
 
@@ -1125,19 +1122,41 @@ void pmu_magic_mode_classic(pmu_magic_role_t role) {
 }
 
 /*---------------------------------------------------------------------------*/
-void autocorr(int8_t* in, int16_t* out, uint16_t length) {
-	uint16_t i;
-	for (i = 0; i < length; i++) { // for every output data element
-		wdt_reset();
-		int64_t fieldval = 0;
-		uint16_t j;
-		for (j = i; j < length; j++) { // for every remaining element in the input data
-			int16_t x = (int16_t)in[j-i];
-			int16_t y = (int16_t)in[j];
-			fieldval += (x * y);
-		}
-		out[i] = fieldval / length; // fieldval must fit into int16_t
+// a quarter cosine to look up complex values for phase angles
+// stored in flash to save memory
+const int16_t quarter_cosine[65] PROGMEM = {
+	32767, 32757, 32728, 32678, 32609, 32521, 32412, 32285,
+	32137, 31971, 31785, 31580, 31356, 31113, 30852, 30571,
+	30273, 29956, 29621, 29268, 28898, 28510, 28105, 27683,
+	27245, 26790, 26319, 25832, 25329, 24811, 24279, 23731,
+	23170, 22594, 22005, 21403, 20787, 20159, 19519, 18868,
+	18204, 17530, 16846, 16151, 15446, 14732, 14010, 13279,
+	12539, 11793, 11039, 10278,  9512,  8739,  7962,  7179,
+	 6393,  5602,  4808,  4011,  3212,  2410,  1608,   804,
+		0 // extra value to get a nice wave
+};
+
+// lookup function to get cosine value from phase angle
+int16_t cosine_lookup(int8_t pos) {
+	if (pos > 63) {
+		//pos between 64 and 127
+		return -1 * pgm_read_word(&quarter_cosine[128 - pos]);
 	}
+	if (pos > 0) {
+		// pos between 0 and 63
+		return pgm_read_word(&quarter_cosine[pos]);
+	}
+	if (pos > -65) {
+		// pos between -64 and -1
+		return pgm_read_word(&quarter_cosine[-pos]);
+	}
+	// pos between -128 and -65
+	return -1 * pgm_read_word(&quarter_cosine[128 + pos]);
+}
+
+// lookup function to get sine value from phase angle
+int16_t sine_lookup(int8_t pos) {
+	return cosine_lookup(pos - 64); // this is just a cosine lookup shifted by 90°
 }
 /*---------------------------------------------------------------------------*/
 /* This process manages a range measurement.
@@ -1208,52 +1227,88 @@ PROCESS_THREAD(ranging_process, ev, data)
 			leds_on(LEDS_YELLOW);
 		#endif
 
-		static uint16_t j; // 16 bit counter for loops
-
-		// calculate autocorrelation
 		#if FFT_N < PMU_MEASUREMENTS
 			#error FFT size too small!
 		#endif
-		static int16_t autocorr_values[FFT_N];
-		autocorr(signed_local_pmu_values, autocorr_values, PMU_MEASUREMENTS);
-		PROCESS_PAUSE();
 
-		// fill rest of window with zeroes
-		for (j = PMU_MEASUREMENTS; j < FFT_N; j++) {
-			autocorr_values[j] = 0;
+		// declare buffers
+		static complex_t capture[FFT_N]; // complex phase data buffer and FFT buffer
+		static uint16_t spectrum[FFT_N]; // spectrum output buffer
+
+		// compute complex values from phase data
+		// loop over all phase values
+		for (int16_t i = 0; i < PMU_MEASUREMENTS; i++) {
+			// get phase value from array
+			int8_t angle = signed_local_pmu_values[i];
+			// lookup real and imaginary parts from table
+			int16_t real = cosine_lookup(angle);
+			int16_t imag = sine_lookup(angle);
+
+			// set values in complex buffer
+			capture[i].r = real;
+			capture[i].i = imag;
 		}
-		PROCESS_PAUSE();
 
-		// run fft
-		static complex_t fft_buff[FFT_N];							// FTT buffer
-		static uint16_t* fft_result = (uint16_t*)autocorr_values;	// reuse buffer to save memory
-		fft_input(autocorr_values, fft_buff);
-		PROCESS_PAUSE();
-		fft_execute(fft_buff);
-		PROCESS_PAUSE();
-		fft_output(fft_buff, fft_result);
-		PROCESS_PAUSE();
+		// pad the unused FFT input with zeros
+		for (int16_t i = PMU_MEASUREMENTS; i < FFT_N; i++) {
+			capture[i].r = 0;
+			capture[i].i = 0;
+		}
 
-		// find peak in fft result
-		uint16_t peak_idx = 0;
-		uint16_t peak_val = 0;
-		for (j = 0; j < FFT_N/2; j++) {
-			if (peak_val < fft_result[j]) {
-				peak_val = fft_result[j];
-				peak_idx = j;
+		// fft_input() function would try to apply a hamming window, we do not use this
+		// our algorithm uses a rectangular window, and we basically already have this
+		fft_execute(capture);               // run fft
+		fft_output(capture, spectrum);      // transform complex output to real valued spectrum
+											// unfortunately this also swaps positive and negative frequencies
+											// we have to work around this later (see below)
+
+		// find the maximum peak in the spectrum
+		uint16_t peak_height = 0;
+		uint16_t peak_pos = 0;
+		// loop over the spectrum
+		for (int16_t i = 0; i < FFT_N; i++) {
+			// save new peak if higher than the last found
+			if (spectrum[i] > peak_height) {
+				peak_height = spectrum[i];
+				peak_pos = i;
 			}
-			//printf("fft: %u\n", fft_result[j]);
 		}
 
-		//printf("peak_idx: %u\n", peak_idx);
+		// parabolic interpolation
+		uint16_t a = (peak_pos - 1) % FFT_N; // left neighbor of peak (might wrap around)
+		uint16_t c = (peak_pos + 1) % FFT_N; // right neighbor of peak (might wrap around)
 
-		// calculate distance from peak
-		fract m = (2.0k * peak_idx) / (1.0k * FFT_N); // take care of 500 kHz spacing
-		PRINTF("DISTANCE_PROCESS: m: %f\n", (float)m);
-		accum dist = (PMU_DIST_SLOPE * m - PMU_DIST_OFFSET);
+		// interpolate peak position (between two FFT bins afterwards)
+		float peak_pos_interp = 0.5 * (spectrum[a] - spectrum[c]) / (spectrum[a] - 2 * spectrum[peak_pos] + spectrum[c]) + peak_pos;
 
+		// interpolate peak height
+		int16_t dac = spectrum[a] - spectrum[c];
+		float didx = peak_pos_interp - peak_pos;
+		float peak_height_interp = spectrum[peak_pos] - 0.25 * dac * didx;
+
+		// fft_output() placed negative frequencies before the positive ones, we need to undo this
+		if (peak_pos_interp < 256) {
+			// negative frequencies are to the left of the spectrum, reorder to fit numpy output
+			peak_pos_interp += 256;
+		} else {
+			// positive frequencies are to the right of the spectrum, reorder to fit numpy output
+			peak_pos_interp -= 256;
+		}
+
+		// fft_output() placed negative frequencies before the positive ones, we need to undo this
+		if (peak_pos < 256) {
+			// negative frequencies are to the left of the spectrum, reorder to fit numpy output
+			peak_pos += 256;
+		} else {
+			// positive frequencies are to the right of the spectrum, reorder to fit numpy output
+			peak_pos -= 256;
+		}
+
+		// compute distance in meters from peak position
+		float dist = D_PER_BIN * peak_pos_interp;
 
 		// check if measurement was successful
+		// TODO: check for DC signal (bin pos close to 0)
 		if (dist < 0) {
 			// the distance must always be positive, otherwise the measurement is useless
 			calc_status = DISTANCE_VALUE_ERROR;
@@ -1262,23 +1317,11 @@ PROCESS_THREAD(ranging_process, ev, data)
 			dist_last_meter = (uint8_t)dist;
 			dist_last_centimeter = (uint8_t)((dist-dist_last_meter)*100);
 
-			// calculate quality
 			// just use the peak value from the fft
-			if (peak_val > 255) {
-				dist_last_quality = 255;
-			} else {
-				dist_last_quality = (uint8_t)peak_val;
-			}
-
+			dist_last_quality = peak_height;
 		}
 
 		PRINTF("DISTANCE_PROCESS: ");
-
-		if (peak_val > 40) {
-			if (dist > 0) {
-				PRINTF("GOOD ");
-			}
-		}
 
 		PRINTF("distance: %u.%u meter\n", (uint8_t)dist, (uint8_t)((dist-((uint8_t)dist))*100));
 

@@ -1,7 +1,7 @@
 #ifndef FFT_N
 #define FFT_N	512		/* Number of samples (64,128,256,512). Don't forget to clean! */
-//#define INPUT_NOUSE
-//#define INPUT_IQ
+#define INPUT_NOUSE
+#define INPUT_IQ
 
 
 #ifndef FFFT_ASM	/* for c modules */

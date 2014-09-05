@@ -143,7 +143,7 @@ int8_t at86rf233_get_status();
 // measurement values
 uint8_t at86rf233_get_dist_meter();
 uint8_t at86rf233_get_dist_centimeter();
-uint8_t at86rf233_get_quality();
+uint16_t at86rf233_get_quality();
 uint16_t at86rf233_get_raw_len();
 int8_t* at86rf233_get_raw_ptr();
 
