@@ -804,6 +804,8 @@ static int8_t pmu_magic(uint8_t type) {
 		break;
 	}
 
+	AT86RF233_ENTER_CRITICAL_REGION();
+
 	// disable LED if timer toggle is indicated to make sure it always toggles the same
 	// enable LED if it indicates ranging
 	#if PMU_GREEN_LED & PMU_LED_TIMER_TOGGLE
@@ -818,7 +820,6 @@ static int8_t pmu_magic(uint8_t type) {
 		leds_on(LEDS_YELLOW);
 	#endif
 
-	AT86RF233_ENTER_CRITICAL_REGION();
 	watchdog_stop();
 	backup_registers();
 
@@ -975,7 +976,6 @@ static int8_t pmu_magic(uint8_t type) {
 
 	restore_initial_status();
 	watchdog_start();
-	AT86RF233_LEAVE_CRITICAL_REGION();
 
 	#if PMU_GREEN_LED & PMU_LED_ON_WHILE_RANGING
 		leds_off(LEDS_GREEN);
@@ -983,6 +983,8 @@ static int8_t pmu_magic(uint8_t type) {
 	#if PMU_YELLOW_LED & PMU_LED_ON_WHILE_RANGING
 		leds_off(LEDS_YELLOW);
 	#endif
+
+	AT86RF233_LEAVE_CRITICAL_REGION();
 
 	return ret_val;
 }
