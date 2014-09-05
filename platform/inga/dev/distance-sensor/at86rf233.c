@@ -52,10 +52,8 @@
 #include "leds.h"
 #include "net/packetbuf.h"
 #include "dev/watchdog.h"
-
 #include "platform-conf.h"
-
-#include "dev/rs232.h"
+#include "binary-uart.h"
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
@@ -332,42 +330,24 @@ static void reset_statemachine() {
 	status_code = next_status_code;
 }
 
-static void send_escaped(uint8_t d) {
-    switch(d) {
-    case SERIAL_FRAME_START:
-    case SERIAL_FRAME_END:
-    case SERIAL_ESCAPE_BYTE:
-    	rs232_send(RS232_PORT_0, SERIAL_ESCAPE_BYTE);
-    	rs232_send(RS232_PORT_0, d-SERIAL_ESCAPE_ADD);
-    	break;
-    default:
-    	rs232_send(RS232_PORT_0, d);
-    	break;
-    }
-}
-
-static void send_16bit(uint16_t d) {
-	send_escaped((d>>8)&0xFF);
-	send_escaped(d&0xFF);
-}
-
 static void send_serial(void) {
-    rs232_send(RS232_PORT_0, SERIAL_FRAME_START);
+    //rs232_send(RS232_PORT_0, SERIAL_FRAME_START);
+	binary_start_frame();
 
     // send number of samples per frequency
-    send_escaped(PMU_SAMPLES);
+    binary_send_byte(PMU_SAMPLES);
 
     // send step size
-    send_escaped(PMU_STEP);
+    binary_send_byte(PMU_STEP);
 
     // send number of frequency blocks
-    send_escaped(DISTANCE_FREQUENCY_BANDS);
+    binary_send_byte(DISTANCE_FREQUENCY_BANDS);
 
 	// send frequency bands
 	uint8_t i;
 	for (i = 0; i < DISTANCE_FREQUENCY_BANDS; i++) {
-		send_16bit(settings.f_start[i]);
-		send_16bit(settings.f_stop[i]);
+		binary_send_short(settings.f_start[i]);
+		binary_send_short(settings.f_stop[i]);
 	}
 
     uint16_t j;
@@ -383,10 +363,11 @@ static void send_serial(void) {
     	}
 
     	// transmit data
-    	send_escaped((v & 0xFF));
+    	binary_send_byte((v & 0xFF));
     }
 
-    rs232_send(RS232_PORT_0, SERIAL_FRAME_END);
+    //rs232_send(RS232_PORT_0, SERIAL_FRAME_END);
+    binary_end_frame();
 }
 
 static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
