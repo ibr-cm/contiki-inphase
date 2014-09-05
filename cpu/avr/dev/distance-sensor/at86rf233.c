@@ -462,8 +462,6 @@ void at86rf233_pmuMagicInitiator() {
 	hal_subregister_write(SR_TX_RX, 0);			// RX PLL frequency is selected
 	hal_subregister_write(SR_RX_PDT_DIS, 1);	// RX Path is disabled
 
-	wait_for_timer2(0);
-
 	hal_subregister_write(SR_PMU_EN, 1);		// enable PMU
 	hal_subregister_write(SR_MOD_SEL, 1);		// manual control of modulation data
 	hal_subregister_write(SR_MOD, 0);			// continuous 0 chips for modulation
@@ -569,8 +567,6 @@ void at86rf233_pmuMagicReflector() {
 	hal_subregister_write(SR_PMU_IF_INVERSE, 1);// Inverse IF position
 	hal_subregister_write(SR_TX_RX, 1);			// TX PLL frequency is selected
 	hal_subregister_write(SR_RX_PDT_DIS, 1);	// RX Path is disabled
-
-	wait_for_timer2(0);
 
 	hal_subregister_write(SR_PMU_EN, 1);		// enable PMU
 	hal_subregister_write(SR_MOD_SEL, 1);		// manual control of modulation data
