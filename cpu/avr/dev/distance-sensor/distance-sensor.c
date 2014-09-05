@@ -98,13 +98,11 @@ configure(int type, int c)
       break;
 
     case DISTANCE_TARGET:
-    	at86rf233_setTarget(c);
+    	at86rf233_set_target(c);
     	return 0;
 
     case DISTANCE_START:
-    	// TODO: only allow this when no other measurement is running
-    	at86rf233_startRanging();
-    	return 0;
+    	return at86rf233_start_ranging();
 
     case DISTANCE_ALLOW_RANGING:
     	if (c) {

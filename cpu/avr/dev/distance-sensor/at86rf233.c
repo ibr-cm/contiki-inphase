@@ -84,6 +84,10 @@
 
 PROCESS(ranging_process, "AT86RF233 Ranging process");
 
+static void pmu_magic_initiator();
+
+static void pmu_magic_reflector();
+
 uint8_t status_code;
 
 linkaddr_t target;
@@ -140,7 +144,7 @@ uint8_t at86rf233_deinit(void) {
 	return 1; // sensor successfully deinitialized
 }
 
-uint8_t at86rf233_startRanging(void) {
+uint8_t at86rf233_start_ranging(void) {
 
 	if (process_is_running(&ranging_process)) {
 		return 1;
@@ -151,13 +155,13 @@ uint8_t at86rf233_startRanging(void) {
 	return 0;
 }
 
-uint8_t at86rf233_setTarget(linkaddr_t *addr) {
+uint8_t at86rf233_set_target(linkaddr_t *addr) {
 	PRINTF("DISTANCE: Set target to %d.%d\n", addr->u8[0], addr->u8[1]); // debug message
 	linkaddr_copy(&target, addr);
 	return 1;
 }
 
-void at86rf233_sendEscaped(uint8_t d) {
+static void send_escaped(uint8_t d) {
     if (d == SERIAL_FRAME_DELIMITER) { // if the current byte is the same as the FRAME_DELIMITER or ESCAPE_OCTET it must be escaped
         rs232_send(RS232_PORT_0, SERIAL_ESCAPE_OCTET);
         rs232_send(RS232_PORT_0, SERIAL_ESCAPE_END);
@@ -170,36 +174,36 @@ void at86rf233_sendEscaped(uint8_t d) {
     }
 }
 
-void at86rf233_send16bit(uint16_t d) {
-	at86rf233_sendEscaped((d>>8)&0xFF);
-	at86rf233_sendEscaped(d&0xFF);
+static void send_16bit(uint16_t d) {
+	send_escaped((d>>8)&0xFF);
+	send_escaped(d&0xFF);
 }
 
-void at86rf233_sendSerial(void) {
+static void send_serial(void) {
     rs232_send(RS232_PORT_0, SERIAL_FRAME_DELIMITER);
 
     // send number of measurements
-    at86rf233_sendEscaped(PMU_MEASUREMENTS);
+    send_escaped(PMU_MEASUREMENTS);
 
     // send number of samples
-    at86rf233_sendEscaped(PMU_SAMPLES);
+    send_escaped(PMU_SAMPLES);
 
     // send step size
-    at86rf233_sendEscaped(PMU_STEP);
+    send_escaped(PMU_STEP);
 
     // TODO: send the four frequency blocks
     // send start frequency
-    at86rf233_send16bit(PMU_START_FREQUENCY);
+    send_16bit(PMU_START_FREQUENCY);
     // send end frequency
-    at86rf233_send16bit(PMU_START_FREQUENCY+PMU_MEASUREMENTS);
+    send_16bit(PMU_START_FREQUENCY+PMU_MEASUREMENTS);
 
     // send fake additional frequency blocks
-    at86rf233_send16bit(0);
-    at86rf233_send16bit(0);
-    at86rf233_send16bit(0);
-    at86rf233_send16bit(0);
-    at86rf233_send16bit(0);
-    at86rf233_send16bit(0);
+    send_16bit(0);
+    send_16bit(0);
+    send_16bit(0);
+    send_16bit(0);
+    send_16bit(0);
+    send_16bit(0);
 
     uint16_t i;
     for (i = 0; i < PMU_MEASUREMENTS*PMU_SAMPLES; i++)
@@ -214,13 +218,13 @@ void at86rf233_sendSerial(void) {
     	}
 
     	// transmit data
-    	at86rf233_sendEscaped((v & 0xFF));
+    	send_escaped((v & 0xFF));
     }
 
     rs232_send(RS232_PORT_0, SERIAL_FRAME_DELIMITER);
 }
 
-void at86rf233_statemachine(uint8_t frame_type, frame_subframe_t *frame) {
+static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 
 	PRINTF("state: frame_type: %u, fsm_state: %u\n", frame_type, fsm_state);
 
@@ -268,7 +272,7 @@ void at86rf233_statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 			f.frame_type = TIME_SYNC_REQUEST;
 			AT86RF233_NETWORK.send(target, 1, &f);
 
-			at86rf233_pmuMagicInitiator();
+			pmu_magic_initiator();
 
 			//_delay_ms(10); // wait for reflector to be finished with the magic...
 
@@ -306,7 +310,7 @@ void at86rf233_statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 			if (next_start < PMU_MEASUREMENTS*PMU_SAMPLES) {
 				fsm_state = RESULT_REQUESTED;
 			} else {
-				at86rf233_sendSerial(); // all results gathered, send via serial port
+				send_serial(); // all results gathered, send via serial port
 				fsm_state = IDLE;
 			}
 		} else {
@@ -319,7 +323,7 @@ void at86rf233_statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 	case RANGING_ACCEPTED:
 	{
 		if (frame_type == TIME_SYNC_REQUEST) {
-			at86rf233_pmuMagicReflector();
+			pmu_magic_reflector();
 			fsm_state = WAIT_FOR_RESULT_REQ;
 		} else {
 			// all other frames are invalid here
@@ -428,7 +432,7 @@ void at86rf233_input(const linkaddr_t *src, uint16_t msg_len, void *msg) {
 		break;
 	}
 	if (msg_accepted) {
-		at86rf233_statemachine(frame_basic->frame_type, &frame_basic->content);
+		statemachine(frame_basic->frame_type, &frame_basic->content);
 	}
 }
 
@@ -443,7 +447,7 @@ void at86rf233_input(const linkaddr_t *src, uint16_t msg_len, void *msg) {
 
 uint8_t ASSR_s, TIMSK2_s, OCR2A_s, OCR2B_s, TCCR2A_s, TCCR2B_s;
 
-void init_timer2(void)
+static void init_timer2(void)
 {
 	// save TIMER2 configuration
 	ASSR_s = ASSR;
@@ -462,7 +466,7 @@ void init_timer2(void)
 	TCCR2B = 0;			// default, stop timer
 }
 
-void restore_timer2(void)
+static void restore_timer2(void)
 {
 	ASSR = ASSR_s;
 	TIMSK2 = TIMSK2_s;
@@ -472,7 +476,7 @@ void restore_timer2(void)
 	TCCR2B = TCCR2B_s;
 }
 
-void start_timer2(uint8_t max) {
+static void start_timer2(uint8_t max) {
 	TCCR2B = 0;			// ensure that the timer is stopped, otherwise setting TCNT2 may go wrong!
 	TCNT2 = 0;
 	OCR2A = max;
@@ -480,7 +484,7 @@ void start_timer2(uint8_t max) {
 	TCCR2B = 0x01;		// default, prescaler 1x
 }
 
-void wait_for_timer2(uint8_t id) {
+static void wait_for_timer2(uint8_t id) {
 	if (TIFR2 & (1 << OCF2A)) {
 		printf_P(PSTR("ERROR on id %u: TIMER2 compare match missed, timing can be corrupted!\n"), id);
 	}
@@ -490,7 +494,7 @@ void wait_for_timer2(uint8_t id) {
 }
 /*---------------------------------------------------------------------------*/
 
-int8_t wait_for_dig2(void) {
+static int8_t wait_for_dig2(void) {
 	// wait for DIG2
 	uint16_t cnt0 = 1;	// this counts up while waiting for the signal, when it overflows the measurement is aborted
 	uint16_t cnt1 = 1;	// this counts up while waiting for the signal, when it overflows the measurement is aborted
@@ -521,7 +525,7 @@ uint8_t rg_tst_agc;
 uint8_t rg_cc_ctrl_1;
 uint8_t rg_cc_ctrl_0;
 
-void backup_registers(void) {
+static void backup_registers(void) {
 	// backup radio state
 	rf230_state = radio_get_trx_state();
 
@@ -536,7 +540,7 @@ void backup_registers(void) {
 	rg_cc_ctrl_0 = hal_register_read(RG_CC_CTRL_0);
 }
 
-void restore_registers(void) {
+static void restore_registers(void) {
 	// restore radio state
 	hal_subregister_write(SR_TRX_CMD, CMD_FORCE_TRX_OFF);
 	hal_subregister_write(SR_TRX_CMD, rf230_state);
@@ -554,7 +558,7 @@ void restore_registers(void) {
 	hal_register_read(RG_IRQ_STATUS);				// clear all pending interrupts
 }
 
-void restore_initial_status(void) {
+static void restore_initial_status(void) {
 	// restore the system and run normally again
 	restore_timer2();
 	restore_registers();		// reset and initialize the radio
@@ -564,7 +568,7 @@ void restore_initial_status(void) {
 // set the frequency in MHz to send on
 // if offset == 1, the frequency is 0.5 Mhz higher
 // frequency must be between 2322 MHz and 2527 MHz
-void at86rf233_setFrequency(uint16_t f, uint8_t offset) {
+static void setFrequency(uint16_t f, uint8_t offset) {
 	if (f < 2322) {
 		// frequency is not supported
 	} else if (f < 2434) {
@@ -586,13 +590,13 @@ void at86rf233_setFrequency(uint16_t f, uint8_t offset) {
 	hal_register_write(RG_CC_CTRL_0, (uint8_t)f);
 }
 
-void at86rf233_senderPMU(void) {
+static void sender_pmu(void) {
 	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
 	hal_register_write(RG_TRX_STATE, CMD_TX_START);
 	_delay_us(60 + 15 * PMU_SAMPLES);	// wait for receiver to measure
 }
 
-void at86rf233_receiverPMU(uint8_t* pmu_values) {
+static void receiver_pmu(uint8_t* pmu_values) {
 	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
 	hal_register_write(RG_TRX_STATE, CMD_RX_ON);
 
@@ -606,7 +610,7 @@ void at86rf233_receiverPMU(uint8_t* pmu_values) {
 	}
 }
 
-void at86rf233_pmuMagicInitiator() {
+static void pmu_magic_initiator() {
 	PRINTF("entered PMU Initiator\n");
 
 	leds_off(2);
@@ -668,9 +672,9 @@ void at86rf233_pmuMagicInitiator() {
 
 	uint8_t i;
 	for (i=0; i < PMU_MEASUREMENTS; i++) {
-		at86rf233_setFrequency(2322 + (i * PMU_STEP), 0);
-		at86rf233_receiverPMU(&local_pmu_values[i*PMU_SAMPLES]);
-		at86rf233_senderPMU();
+		setFrequency(2322 + (i * PMU_STEP), 0);
+		receiver_pmu(&local_pmu_values[i*PMU_SAMPLES]);
+		sender_pmu();
 		wait_for_timer2(5);
 	}
 
@@ -689,7 +693,7 @@ void at86rf233_pmuMagicInitiator() {
 	AT86RF233_LEAVE_CRITICAL_REGION();
 }
 
-void at86rf233_pmuMagicReflector() {
+static void pmu_magic_reflector() {
 	PRINTF("entered PMU Reflector\n");
 
 	leds_off(2);
@@ -772,9 +776,9 @@ void at86rf233_pmuMagicReflector() {
 
 	uint8_t i;
 	for (i=0; i < PMU_MEASUREMENTS; i++) {
-		at86rf233_setFrequency(2322 + (i * PMU_STEP), 1);
-		at86rf233_senderPMU();
-		at86rf233_receiverPMU(&local_pmu_values[i*PMU_SAMPLES]);
+		setFrequency(2322 + (i * PMU_STEP), 1);
+		sender_pmu();
+		receiver_pmu(&local_pmu_values[i*PMU_SAMPLES]);
 		wait_for_timer2(5);
 	}
 

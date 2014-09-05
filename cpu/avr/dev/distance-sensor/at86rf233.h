@@ -138,11 +138,9 @@ uint8_t at86rf233_init(void);
 
 uint8_t at86rf233_deinit(void);
 
-uint8_t at86rf233_startRanging(void);
+uint8_t at86rf233_start_ranging(void);
 
-uint8_t at86rf233_setTarget(linkaddr_t* addr);
-
-void at86rf233_statemachine(uint8_t frame_type, frame_subframe_t *frame);
+uint8_t at86rf233_set_target(linkaddr_t* addr);
 
 /**
  * \brief coap_input
@@ -154,10 +152,6 @@ void at86rf233_statemachine(uint8_t frame_type, frame_subframe_t *frame);
  * \param msg pointer to the message
  */
 void at86rf233_input(const linkaddr_t* src, uint16_t msg_len, void *msg);
-
-void at86rf233_pmuMagicInitiator();
-
-void at86rf233_pmuMagicReflector();
 
 #endif /* __AT86RF233_H__ */
 
