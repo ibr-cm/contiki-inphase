@@ -68,8 +68,8 @@
 #define PMU_MAXIMUM_FREQUENCY 2527		// maximum frequency from AT86RF233 data sheet (maybe 2543.5 MHz will work)
 
 #define PMU_START_FREQUENCY 2400		// start frequency for measurement
-#define PMU_SAMPLES 4					// number of samples that are taken for each frequency by both nodes
-#define PMU_SAMPLES_SHIFT 2				// bitshift to substitute the division by the PMU_SAMPLES
+#define PMU_SAMPLES 1					// number of samples that are taken for each frequency by both nodes
+#define PMU_SAMPLES_SHIFT 0				// bitshift to substitute the division by the PMU_SAMPLES
 #define PMU_MEASUREMENTS 200			// number of frequencies to measure
 
 // calibration values for quadratic
@@ -77,13 +77,17 @@
 #define PMU_CALIB_X  132.76889372k		// linear part
 #define PMU_CALIB_B  0.59048228802k		// constant part
 
-#define PMU_DIST_OFFSET 1.092k			// distance offset from hardware (meter)
+//#define PMU_DIST_OFFSET 1.092k			// distance offset from hardware (meter)
+#define PMU_DIST_OFFSET 3.342k			// distance offset from hardware (meter)
 #define PMU_DIST_SLOPE	149.896229k		// slope calculated from sample distance
 
 // configuration of signaling on the LEDs
 // LEDs can be disabled to enabled measurement of power consumption
 #define PMU_GREEN_LED	(PMU_LED_ON_WHILE_RANGING | PMU_LED_ON_WHILE_CALC)
 #define PMU_YELLOW_LED	PMU_LED_ON_WHILE_PMU_READ
+
+//#define PMU_GREEN_LED	PMU_LED_NONE
+//#define PMU_YELLOW_LED	PMU_LED_NONE
 
 // possibilities to display on LEDs
 #define PMU_LED_NONE				0	// do not change LEDs
