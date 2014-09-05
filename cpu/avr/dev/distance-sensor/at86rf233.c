@@ -496,6 +496,7 @@ void at86rf233_pmuMagicInitiator() {
 
 	wait_for_timer2(1);
 
+	// TODO: maybe add a function to HAL that writes only zeros to FB to save memory?
 	uint8_t fb_data[127] = {0};					// setup a framebuffer with all zeroes
 	hal_frame_write(fb_data, 127);				// copy data to sram, framebuffer section
 
@@ -518,14 +519,13 @@ void at86rf233_pmuMagicInitiator() {
 	hal_register_write(RG_TRX_STATE, CMD_TX_START);
 
 	wait_for_timer2(4);
-	start_timer2(10);					// timer counts to 18, we have 580us between synchronization points
+	start_timer2(10);					// timer counts to 10, we have 336us between synchronization points
 
 	uint8_t i;
 	for (i=0; i < PMU_MEASUREMENTS; i++) {
 		at86rf233_setFrequency(2322 + (i * PMU_STEP), 0);
 		at86rf233_receiverPMU(pmu_values[i]);
 		at86rf233_senderPMU();
-		//while(true) {};
 		wait_for_timer2(5);
 	}
 
@@ -541,10 +541,6 @@ void at86rf233_pmuMagicInitiator() {
 			printf("pmu[%u][%u]: %u\n", j, i, pmu_values[j][i]);
 		}
 	}
-
-//	while (1) {
-//		wait_for_timer2();
-//	}
 
 	restore_initial_status();
 	AT86RF233_LEAVE_CRITICAL_REGION();
@@ -599,6 +595,7 @@ void at86rf233_pmuMagicReflector() {
 
 	wait_for_timer2(1);
 
+	// TODO: maybe add a function to HAL that writes only zeros to FB to save memory?
 	uint8_t fb_data[127] = {0};					// setup a framebuffer with all zeroes
 	hal_frame_write(fb_data, 127);				// copy data to sram, framebuffer section
 
@@ -621,14 +618,13 @@ void at86rf233_pmuMagicReflector() {
 	hal_register_write(RG_TST_AGC, 0x09);		// TODO: set gain according to rssi
 
 	wait_for_timer2(4);
-	start_timer2(10);					// timer counts to 18, we have 580us between synchronization points
+	start_timer2(10);					// timer counts to 10, we have 336us between synchronization points
 
 	uint8_t i;
 	for (i=0; i < PMU_MEASUREMENTS; i++) {
 		at86rf233_setFrequency(2322 + (i * PMU_STEP), 1);
 		at86rf233_senderPMU();
 		at86rf233_receiverPMU(pmu_values[i]);
-		//while(true) {};
 		wait_for_timer2(5);
 	}
 
@@ -642,10 +638,6 @@ void at86rf233_pmuMagicReflector() {
 			printf("pmu[%u][%u]: %u\n", j, i, pmu_values[j][i]);
 		}
 	}
-
-//	while (1) {
-//		wait_for_timer2();
-//	}
 
 	restore_initial_status();
 	AT86RF233_LEAVE_CRITICAL_REGION();
