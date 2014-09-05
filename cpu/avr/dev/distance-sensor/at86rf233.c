@@ -46,7 +46,9 @@
 #include "dev/radio.h"
 #include "radio/rf230bb/rf230bb.h"
 #include "leds.h"
+#include "net/packetbuf.h"
 
+#include <avr/io.h>
 #include <avr/io.h>
 #include <avr/interrupt.h>
 
@@ -289,6 +291,8 @@ void at86rf233_input(const linkaddr_t *src, uint16_t msg_len, void *msg) {
 void at86rf233_pmuMagicInitiator() {
 	printf("entered PMU Initiator\n");
 
+	leds_off(2);
+
 	cli();
 	watchdog_stop();
 
@@ -299,8 +303,10 @@ void at86rf233_pmuMagicInitiator() {
 
 	// wait for DIG2
 	leds_on(2);
-	while (PINB & PB0 == 0) {}
+	while ((PINB & (1<<PB0)) == 0) {}	// TODO: define this input pin in the platform
 	leds_off(2);
+
+	// now in sync with the reflector
 
 	while (1) {
 		leds_on(1);
@@ -316,8 +322,12 @@ void at86rf233_pmuMagicInitiator() {
 void at86rf233_pmuMagicReflector() {
 	printf("entered PMU Reflector\n");
 
+	leds_off(2);
+
 	cli();
 	watchdog_stop();
+
+	_delay_ms(1000);
 
 	hal_subregister_write(SR_TX_PWR, 0xF);			// set TX output power to -17dBm to avoid reflections
 	hal_register_read(RG_IRQ_STATUS);				// clear all pending interrupts
@@ -328,12 +338,24 @@ void at86rf233_pmuMagicReflector() {
 	// send PMU start
 	frame_range_basic_t f;
 	f.frame_type = PMU_START;
-	AT86RF233_NETWORK.send(target, 1, &f);
+	//AT86RF233_NETWORK.send(initiator_requested, 1, &f);
+
+	// send PMU start on bare metal, as the normal protocol stack is too slow for us to be able to see the DIG2 signal
+	//packetbuf_copyfrom(&f, 1);
+	//packetbuf_set_addr(PACKETBUF_ADDR_RECEIVER, &initiator_requested);
+	//packetbuf_set_addr(PACKETBUF_ADDR_SENDER, &linkaddr_node_addr);
+	//packetbuf_compact();
+	hal_subregister_write(SR_TRX_CMD, TX_ARET_ON);
+	hal_set_slptr_low();
+	//hal_frame_write(packetbuf_hdrptr(), packetbuf_totlen());
+	hal_set_slptr_high(); // send the packet at the latest time possible
 
 	// wait for DIG2
 	leds_on(2);
-	while (PINB & PB0 == 0) {}
+	while ((PINB & (1<<PB0)) == 0) {}	// TODO: define this input pin in the platform
 	leds_off(2);
+
+	// now in sync with the initiator
 
 	while (1) {
 		leds_on(1);
