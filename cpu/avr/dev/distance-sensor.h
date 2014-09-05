@@ -67,15 +67,21 @@ extern const struct sensors_sensor distance_sensor;
 #define DISTANCE_START         1
 // allow the sensor to answer ranging requests from other nodes
 #define DISTANCE_ALLOW_RANGING 2
+// output raw measurement data on stdout at initiator node for post-processing
+#define DISTANCE_RAW_OUTPUT	   3
 
 // Status codes
 
+// no measurement running, idle
+#define DISTANCE_IDLE      0
 // measurement is currently running
 #define DISTANCE_RUNNING   1
 // measurement failed to unknown reasons
 #define DISTANCE_FAILED    2
 // this sensor node has no AT86RF233 radio, measurement not possible
 #define DISTANCE_NO_RF233  3
+// communication with reflector timed out
+#define DISTANCE_TIMEOUT   4
 
 #endif /* __DISTANCE_SENSOR_H__ */
 

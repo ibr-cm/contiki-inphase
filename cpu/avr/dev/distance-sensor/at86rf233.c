@@ -40,7 +40,10 @@
  * @{
  */
 
+#include "contiki.h"
+
 #include "at86rf233.h"
+#include "../distance-sensor.h"
 
 #include "radio/rf230bb/hal.h"
 #include "dev/radio.h"
@@ -79,6 +82,10 @@
 #define PRINTF(...)
 #endif
 
+PROCESS(ranging_process, "AT86RF233 Ranging process");
+
+uint8_t status_code;
+
 linkaddr_t target;
 linkaddr_t initiator_requested;
 
@@ -113,6 +120,14 @@ uint8_t at86rf233_init(void) {
 	AT86RF233_NETWORK.init();
 
 	// initialize needed data structures
+	linkaddr_copy(&target, &linkaddr_null); // invalidate target address
+	linkaddr_copy(&initiator_requested, &linkaddr_null); // invalidate initiator_requested address
+
+	if (!at86rf233_available()) {
+		status_code = DISTANCE_NO_RF233;
+	} else {
+		status_code = DISTANCE_IDLE;
+	}
 
 	return 0; // sensor successfully initialized
 }
@@ -126,29 +141,14 @@ uint8_t at86rf233_deinit(void) {
 }
 
 uint8_t at86rf233_startRanging(void) {
-	// start a range measurement
 
-	frame_subframe_t reqframe;
+	if (process_is_running(&ranging_process)) {
+		return 1;
+	}
 
-	reqframe.range_request.ranging_method = RANGING_METHOD_PMU;
-	reqframe.range_request.f0_start = 25000;
-	reqframe.range_request.f0_stop = 28000;
-	reqframe.range_request.f1_start = 0;
-	reqframe.range_request.f1_stop = 0;
-	reqframe.range_request.f2_start = 0;
-	reqframe.range_request.f2_stop = 0;
-	reqframe.range_request.f3_start = 0;
-	reqframe.range_request.f3_stop = 0;
-	reqframe.range_request.f4_start = 0;
-	reqframe.range_request.f4_stop = 0;
-	reqframe.range_request.f_step = 5;
-	reqframe.range_request.capabilities = 0x00;
-
-	fsm_state = IDLE;
-
-	at86rf233_statemachine(RANGE_REQUEST_START, &reqframe);
-
-	return 1;
+	// ranging process is not running, ranging is possible
+	process_start(&ranging_process, NULL);
+	return 0;
 }
 
 uint8_t at86rf233_setTarget(linkaddr_t *addr) {
@@ -791,4 +791,54 @@ void at86rf233_pmuMagicReflector() {
 
 	restore_initial_status();
 	AT86RF233_LEAVE_CRITICAL_REGION();
+}
+/*---------------------------------------------------------------------------*/
+/* This process manages a range measurement.
+ * It is run at the initiator node and ensures that the measurement runs
+ * asynchronously while the user process that started the ranging can do other tasks.
+ *
+ * NOTE: the processor is completely blocked when the actual ranging happens,
+ * only during negotiation phases between initiator and reflector other processes
+ * can run.
+ */
+PROCESS_THREAD(ranging_process, ev, data)
+{
+	PROCESS_BEGIN();
+
+	// check if the target address is set
+	if (linkaddr_cmp(&target, &linkaddr_null)) {
+		// no target address is set, ranging not possible
+		return 0;
+	}
+
+	status_code = DISTANCE_RUNNING;
+
+	// start a range measurement
+	frame_subframe_t reqframe;
+
+	reqframe.range_request.ranging_method = RANGING_METHOD_PMU;
+	reqframe.range_request.f0_start = 25000;
+	reqframe.range_request.f0_stop = 28000;
+	reqframe.range_request.f1_start = 0;
+	reqframe.range_request.f1_stop = 0;
+	reqframe.range_request.f2_start = 0;
+	reqframe.range_request.f2_stop = 0;
+	reqframe.range_request.f3_start = 0;
+	reqframe.range_request.f3_stop = 0;
+	reqframe.range_request.f4_start = 0;
+	reqframe.range_request.f4_stop = 0;
+	reqframe.range_request.f_step = 5;
+	reqframe.range_request.capabilities = 0x00;
+
+	fsm_state = IDLE;
+
+	statemachine(RANGE_REQUEST_START, &reqframe);
+
+	while (fsm_state != IDLE) {
+		PROCESS_PAUSE();
+	}
+
+	printf("ranging finished\n");
+
+	PROCESS_END();
 }
