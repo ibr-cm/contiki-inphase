@@ -140,7 +140,7 @@ struct {
 uint8_t local_pmu_values[PMU_VALUES_LEN];
 int8_t* signed_local_pmu_values = (int8_t*)local_pmu_values;	// reuse buffer to save memory
 
-#define MEASUREMENT_TIMEOUT (0.02 * CLOCK_SECOND)
+#define MEASUREMENT_TIMEOUT (0.1 * CLOCK_SECOND)
 struct ctimer timeout_timer;  	// if this timer runs out, the measurement has
 								// failed due to a timeout in the network
 
