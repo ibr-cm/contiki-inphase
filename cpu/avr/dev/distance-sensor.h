@@ -82,17 +82,21 @@ typedef struct {
 #define DISTANCE_FREQ_STEP     5
 
 // Status codes for SENSORS_READY
-#define DISTANCE_INVALID   0
+#define DISTANCE_INVALID      0
 // no measurement running, idle, ready for measurement
-#define DISTANCE_IDLE      1
+#define DISTANCE_IDLE         1
 // measurement is currently running
-#define DISTANCE_RUNNING   2
+#define DISTANCE_RUNNING      2
 // measurement failed to unknown reasons
-#define DISTANCE_FAILED    3
+#define DISTANCE_FAILED       3
 // this sensor node has no AT86RF233 radio, measurement not possible
-#define DISTANCE_NO_RF233  4
+#define DISTANCE_NO_RF233     4
 // communication with reflector timed out
-#define DISTANCE_TIMEOUT   5
+#define DISTANCE_TIMEOUT      5
+// reflector doesn't answer to ranging request
+#define DISTANCE_NO_REFLECTOR 6
+// timing synchronization failed
+#define DISTANCE_NO_SYNC      7
 
 #endif /* __DISTANCE_SENSOR_H__ */
 
