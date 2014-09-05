@@ -287,100 +287,81 @@ void at86rf233_input(const linkaddr_t *src, uint16_t msg_len, void *msg) {
 	printf("message received!\n");
 }
 
+/*---------------------------------------------------------------------------*/
+/* These functions are used to control TIMER2. The TIMER2 is clocked by an
+ * external 32.768 kHz crystal. By dividing the instructions needed to do a
+ * measurement into smaller chunks, we are able to wait for the timer to expire
+ * before the next chunk is executed. This way we can guarantee that both nodes
+ * are always at the same point in their code without the need to synchronize
+ * the clocks of the CPUs. Every time wait_for_timer2() returns both nodes are
+ * at the same point in time. */
+
+uint8_t ASSR_s, TIMSK2_s, OCR2A_s, OCR2B_s, TCCR2A_s, TCCR2B_s;
+
+void init_timer2(void)
+{
+	// save TIMER2 configuration
+	ASSR_s = ASSR;
+	TIMSK2_s = TIMSK2;
+	OCR2A_s = OCR2A;
+	OCR2B_s = OCR2B;
+	TCCR2A_s = TCCR2A;
+	TCCR2B_s = TCCR2B;
+
+	// setup TIMER2 to run at 32.768 kHz from external oscillator
+	ASSR = 0b00100000; 	// asynchronous clock
+	TIMSK2 = 0x00;		// disable interrupts for timer
+	TIFR2 = 0xFF;		// clear flags
+	TCNT2 = 0x00;		// set counter to 0
+	TCCR2A = 0b00000010;// CTC mode, TOP = OCR2A
+	TCCR2B = 0x01;		// default, prescaler 1x
+}
+
+void restore_timer2(void)
+{
+	ASSR = ASSR_s;
+	TIMSK2 = TIMSK2_s;
+	OCR2A = OCR2A_s;
+	OCR2B = OCR2B_s;
+	TCCR2A = TCCR2A_s;
+	TCCR2B = TCCR2B_s;
+}
+
+void set_max_timer2(uint8_t max) {
+	OCR2A = max;
+	TIFR2 = 0xFF;		// clear flags
+}
+
+void wait_for_timer2(void) {
+	if (TIFR2 & (1 << OCF2A)) {
+		printf("ERROR: TIMER2 compare match missed, timing can be corrupted!\n");
+	}
+	while (!(TIFR2 & (1 << OCF2A))){}	// wait for compare match
+	TIFR2 = 0xFF;
+}
+/*---------------------------------------------------------------------------*/
+
 void at86rf233_pmuMagicInitiator() {
 	printf("entered PMU Initiator\n");
 
 	leds_off(2);
+	leds_off(1);
 
 	cli();
 	watchdog_stop();
+
+	init_timer2();
 
 	hal_subregister_write(SR_TX_PWR, 0xF);			// set TX output power to -17dBm to avoid reflections
 	hal_register_read(RG_IRQ_STATUS);				// clear all pending interrupts
 	hal_subregister_write(SR_ARET_TX_TS_EN, 0x1);	// signal frame transmission via DIG2
 	hal_subregister_write(SR_IRQ_2_EXT_EN, 0x1);	// enable time stamping via DIG2
 
-	/* TODO: hijack TIMER0/1 here to run out once every 10ms and adjust OSCCAL
-	 * so that every signal on DIG2 shows the same value in TCNT0/1
-	 * restore timer afterwards */
-
-	// save registers
-	uint8_t TCCR1A_s = TCCR1A;
-	uint8_t TCCR1B_s = TCCR1B;
-	uint8_t TCCR1C_s = TCCR1C;
-	uint16_t TCNT1_s = TCNT1;
-	uint16_t OCR1A_s = OCR1A;
-	uint16_t OCR1B_s = OCR1B;
-	uint16_t TIMSK1_s = TIMSK1;
-
-	TCCR1A = 0b00000000;
-	// TODO: abhängig von F_CPU machen!
-	TCCR1B = 0b00000001; //Normal Mode, Prescaler 1 -> etwa 122 Hz bei F_CPU = 8 MHz
-
-	uint8_t edge = 0; // only on rising edge
-
-	int32_t new_time = 0;
-	uint16_t last_time = 0;
-
-	uint8_t settle_cnt = 0;
-
-	OSCCAL = 0xBF; // set OSCCAL to half its max value
-
-	while (1) {
-		if (edge == 0) {
-			if ((PINB & (1<<PB0)) == 0) {
-				uint16_t tcnt = (uint16_t)(TCNT1H << 8) | TCNT1L;
-				if ((TIFR1 & (1<<TOV1)) == 1) { // timer overflow in between DIG2 signals
-					leds_toggle(1);
-					new_time = 0;
-					// TODO: calculate the offset and use this measurement, too!
-					TIFR1 |= (1<<TOV1); // clear TOV1 bit
-				} else {
-					new_time = 0;
-				}
-				uint8_t cal_range = OSCCAL >> CAL7;
-				uint8_t cal_value = OSCCAL & 0x7F;
-				new_time += tcnt;
-				new_time -= last_time;
-				if (new_time > 0) {
-					// we are too slow
-					cal_value--;
-				}
-				if (new_time < 0) {
-					// we are too fast
-					cal_value++;
-				}
-				if (cal_value == 0) {
-					// change cal_range and set to middle
-					cal_range = 0;
-					cal_value = 64;
-				}
-				else if (cal_value > 127) {
-					// change cal_range and set to middle
-					cal_range = 1;
-					cal_value = 64;
-				}
-				if (settle_cnt == 3) {
-					OSCCAL = (uint8_t)((cal_range << CAL7) | (cal_value & 0xFF));
-					settle_cnt = 0;
-				} else {
-					settle_cnt++;
-				}
-				printf("%d, %u\n", (int)new_time, OSCCAL);
-				edge = 1;
-				last_time = tcnt;
-			}
-		} else {
-			if ((PINB & (1<<PB0)) != 0) {
-				edge = 0;
-			}
-		}
-	}
-
-
 	// wait for DIG2
 	leds_on(2);
 	while ((PINB & (1<<PB0)) == 0) {}	// TODO: define this input pin in the platform
+	while ((PINB & (1<<PB0)) == 1) {}	// wait for falling edge
+	set_max_timer2(20);
 	leds_off(2);
 
 	// now in sync with the reflector
@@ -389,11 +370,11 @@ void at86rf233_pmuMagicInitiator() {
 	hal_subregister_write(SR_RX_PDT_DIS, 1);	// RX Path is disabled
 
 	while (1) {
-		leds_on(1);
-		_delay_ms(200);
-		leds_off(1);
-		_delay_ms(200);
+		leds_toggle(1);
+		wait_for_timer2();
 	}
+
+	restore_timer2();
 
 	watchdog_start();
 	sei();
@@ -403,11 +384,12 @@ void at86rf233_pmuMagicReflector() {
 	printf("entered PMU Reflector\n");
 
 	leds_off(2);
+	leds_off(1);
 
 	cli();
 	watchdog_stop();
 
-	_delay_ms(2000);
+	init_timer2();
 
 	hal_subregister_write(SR_TX_PWR, 0xF);			// set TX output power to -17dBm to avoid reflections
 	hal_register_read(RG_IRQ_STATUS);				// clear all pending interrupts
@@ -420,34 +402,6 @@ void at86rf233_pmuMagicReflector() {
 	f.frame_type = PMU_START;
 	//AT86RF233_NETWORK.send(initiator_requested, 1, &f);
 
-	/* TODO: hijack TIMER0/1 to generate a packet every 10ms, use busy waiting
-	 * on overflow interrupt bit to generate next packet, restore timer afterwards */
-
-	// save registers
-	uint8_t TCCR1A_s = TCCR1A;
-	uint8_t TCCR1B_s = TCCR1B;
-	uint8_t TCCR1C_s = TCCR1C;
-	uint16_t TCNT1_s = TCNT1;
-	uint16_t OCR1A_s = OCR1A;
-	uint16_t OCR1B_s = OCR1B;
-	uint16_t TIMSK1_s = TIMSK1;
-
-	TCCR1A = 0b00000000;
-	// TODO: abhängig von F_CPU machen!
-	TCCR1B = 0b00000001; //Normal Mode, Prescaler 1 -> etwa 122 Hz bei F_CPU = 8 MHz
-
-	leds_on(2);
-
-	while (1) {
-		if ((TIFR1 & (1<<TOV1)) == 1) {
-			leds_toggle(1);
-			hal_subregister_write(SR_TRX_CMD, PLL_ON);
-			hal_set_slptr_low();
-			hal_set_slptr_high();
-			TIFR1 |= (1<<TOV1); // clear TOV1 bit
-			//_delay_ms(2);
-		}
-	}
 	// send PMU start on bare metal, as the normal protocol stack is too slow for us to be able to see the DIG2 signal
 	//packetbuf_copyfrom(&f, 1);
 	//packetbuf_set_addr(PACKETBUF_ADDR_RECEIVER, &initiator_requested);
@@ -455,12 +409,13 @@ void at86rf233_pmuMagicReflector() {
 	//packetbuf_compact();
 	hal_subregister_write(SR_TRX_CMD, TX_ARET_ON);
 	hal_set_slptr_low();
-	//hal_frame_write(packetbuf_hdrptr(), packetbuf_totlen());
 	hal_set_slptr_high(); // send the packet at the latest time possible
 
 	// wait for DIG2
 	leds_on(2);
 	while ((PINB & (1<<PB0)) == 0) {}	// TODO: define this input pin in the platform
+	while ((PINB & (1<<PB0)) == 1) {}	// wait for falling edge
+	set_max_timer2(20);
 	leds_off(2);
 
 	// now in sync with the initiator
@@ -470,11 +425,11 @@ void at86rf233_pmuMagicReflector() {
 	hal_subregister_write(SR_RX_PDT_DIS, 1);	// RX Path is disabled
 
 	while (1) {
-		leds_on(1);
-		_delay_ms(200);
-		leds_off(1);
-		_delay_ms(200);
+		leds_toggle(1);
+		wait_for_timer2();
 	}
+
+	restore_timer2();
 
 	watchdog_start();
 	sei();
