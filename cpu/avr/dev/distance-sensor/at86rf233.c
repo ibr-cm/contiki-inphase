@@ -55,6 +55,9 @@
 #include <stdio.h>
 #include <string.h>
 
+#define AT86RF233_ENTER_CRITICAL_REGION( ) {uint8_t volatile saved_sreg = SREG; cli( )
+#define AT86RF233_LEAVE_CRITICAL_REGION( ) SREG = saved_sreg;}
+
 linkaddr_t target;
 linkaddr_t initiator_requested;
 
@@ -408,7 +411,6 @@ void restore_initial_status(void) {
 	restore_timer2();
 	restore_registers();		// reset and initialize the radio
 	watchdog_start();
-	sei();
 }
 
 void at86rf233_pmuMagicInitiator() {
@@ -417,7 +419,7 @@ void at86rf233_pmuMagicInitiator() {
 	leds_off(2);
 	leds_off(1);
 
-	cli();
+	AT86RF233_ENTER_CRITICAL_REGION();
 	watchdog_stop();
 	backup_registers();
 
@@ -501,6 +503,7 @@ void at86rf233_pmuMagicInitiator() {
 //	}
 
 	restore_initial_status();
+	AT86RF233_LEAVE_CRITICAL_REGION();
 }
 
 void at86rf233_pmuMagicReflector() {
@@ -509,7 +512,7 @@ void at86rf233_pmuMagicReflector() {
 	leds_off(2);
 	leds_off(1);
 
-	cli();
+	AT86RF233_ENTER_CRITICAL_REGION();
 	watchdog_stop();
 	backup_registers();
 
@@ -593,4 +596,5 @@ void at86rf233_pmuMagicReflector() {
 //	}
 
 	restore_initial_status();
+	AT86RF233_LEAVE_CRITICAL_REGION();
 }
