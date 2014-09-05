@@ -68,8 +68,6 @@
 #define PMU_MAXIMUM_FREQUENCY 2527		// maximum frequency from AT86RF233 data sheet (maybe 2543.5 MHz will work)
 
 #define PMU_START_FREQUENCY 2400		// start frequency for measurement
-#define PMU_SAMPLES 1					// number of samples that are taken for each frequency by both nodes
-#define PMU_SAMPLES_SHIFT 0				// bitshift to substitute the division by the PMU_SAMPLES
 #define PMU_MEASUREMENTS 200			// number of frequencies to measure
 
 // calibration values for quadratic
@@ -143,9 +141,8 @@ struct {
 	uint8_t allow_ranging;
 } settings;
 
-// allocate an array with 206 bytes, this works for full spectrum at 1 MHz steps
-#define PMU_VALUES_LEN PMU_MAXIMUM_FREQUENCY-PMU_MINIMUM_FREQUENCY+1
-uint8_t local_pmu_values[PMU_VALUES_LEN];
+// allocate an array for the measurement results
+uint8_t local_pmu_values[PMU_MEASUREMENTS];
 int8_t* signed_local_pmu_values = (int8_t*)local_pmu_values;	// reuse buffer to save memory
 
 #define REQUEST_TIMEOUT (0.05 * CLOCK_SECOND)
@@ -223,7 +220,7 @@ uint8_t at86rf233_get_quality() {
 }
 
 uint16_t at86rf233_get_raw_len() {
-	return PMU_VALUES_LEN;
+	return PMU_MEASUREMENTS;
 }
 
 int8_t* at86rf233_get_raw_ptr() {
@@ -846,10 +843,10 @@ static void setFrequency(uint16_t f, uint8_t offset) {
 static void sender_pmu(void) {
 	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
 	hal_register_write(RG_TRX_STATE, CMD_TX_START);
-	_delay_us(70 + 15 * PMU_SAMPLES);	// wait for receiver to measure
+	_delay_us(85);	// wait for receiver to measure
 }
 
-static void receiver_pmu(uint8_t* pmu_values) {
+static void receiver_pmu(uint8_t* pmu_value) {
 	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
 	hal_register_write(RG_TRX_STATE, CMD_RX_ON);
 
@@ -862,13 +859,7 @@ static void receiver_pmu(uint8_t* pmu_values) {
 		leds_on(LEDS_YELLOW);
 	#endif
 
-	uint8_t i;
-	uint16_t accumulator = 0; // this hold all sampled pmu values
-	for (i = 0; i < PMU_SAMPLES; i++) {
-		accumulator += hal_register_read(RG_PHY_PMU_VALUE);
-		//_delay_us(8); // value is updated every 8us but we are slower with reading the value anyway
-	}
-	pmu_values[0] = (accumulator>>PMU_SAMPLES_SHIFT); // divide by the number of samples
+	*pmu_value = hal_register_read(RG_PHY_PMU_VALUE);
 
 	#if PMU_GREEN_LED & PMU_LED_ON_WHILE_PMU_READ
 		leds_off(LEDS_GREEN);
