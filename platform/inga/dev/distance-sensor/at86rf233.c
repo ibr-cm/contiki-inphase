@@ -168,6 +168,14 @@ uint8_t at86rf233_available(void) {
 uint8_t at86rf233_init(void) {
 	// initialize the measurement system
 
+	if (!at86rf233_available()) {
+		// if we have no AT86RF233 we can stop already
+		status_code = DISTANCE_NO_RF233;
+		return 1;
+	} else {
+		status_code = DISTANCE_IDLE;
+	}
+
 	// set up a network connection to communicate with other nodes
 	AT86RF233_NETWORK.init();
 
@@ -177,12 +185,6 @@ uint8_t at86rf233_init(void) {
 
 	settings.raw_output = 0;
 	settings.allow_ranging = 0; // ranging is disabled by default
-
-	if (!at86rf233_available()) {
-		status_code = DISTANCE_NO_RF233;
-	} else {
-		status_code = DISTANCE_IDLE;
-	}
 
 	return 0; // sensor successfully initialized
 }
