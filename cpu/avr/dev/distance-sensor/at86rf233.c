@@ -55,11 +55,17 @@
 #include <stdio.h>
 #include <string.h>
 
+#define PMU_SAMPLES 4	// number of samples that are taken for each frequency by both nodes
+#define PMU_MEASUREMENTS 200 // number of frequencies to measure
+#define PMU_STEP 1 // frequency step for measurement
+
 #define AT86RF233_ENTER_CRITICAL_REGION( ) {uint8_t volatile saved_sreg = SREG; cli( )
 #define AT86RF233_LEAVE_CRITICAL_REGION( ) SREG = saved_sreg;}
 
 linkaddr_t target;
 linkaddr_t initiator_requested;
+
+uint8_t pmu_values[PMU_MEASUREMENTS][PMU_SAMPLES];
 
 enum fsm_states {
 	IDLE,
@@ -415,6 +421,7 @@ void restore_initial_status(void) {
 
 // set the frequency in MHz to send on
 // if offset == 1, the frequency is 0.5 Mhz higher
+// frequency must be between 2322 MHz and 2527 MHz
 void at86rf233_setFrequency(uint16_t f, uint8_t offset) {
 	if (f < 2322) {
 		// frequency is not supported
@@ -435,6 +442,26 @@ void at86rf233_setFrequency(uint16_t f, uint8_t offset) {
 	}
 
 	hal_register_write(RG_CC_CTRL_0, (uint8_t)f);
+}
+
+void at86rf233_senderPMU(void) {
+	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
+	hal_register_write(RG_TRX_STATE, CMD_TX_START);
+	_delay_us(60 + 15 * PMU_SAMPLES);	// wait for receiver to measure
+}
+
+void at86rf233_receiverPMU(uint8_t* pmu_values) {
+	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
+	hal_register_write(RG_TRX_STATE, CMD_RX_ON);
+
+	_delay_us(50); // wait for sender to be ready
+
+	uint8_t i;
+
+	for (i = 0; i < PMU_SAMPLES; i++) {
+		pmu_values[i] = hal_register_read(RG_PHY_PMU_VALUE);
+		//_delay_us(8); // value is updated every 8us but we are slower with reading the value anyway
+	}
 }
 
 void at86rf233_pmuMagicInitiator() {
@@ -491,36 +518,28 @@ void at86rf233_pmuMagicInitiator() {
 	hal_register_write(RG_TRX_STATE, CMD_TX_START);
 
 	wait_for_timer2(4);
-
-	at86rf233_setFrequency(2500, 0);
-
-	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
-	hal_register_write(RG_TRX_STATE, CMD_RX_ON);
-
-	_delay_us(50); // wait for sender to be ready
-
-#define PMU_SAMPLES 4
-
-	uint8_t pmu_values[PMU_SAMPLES];
+	start_timer2(10);					// timer counts to 18, we have 580us between synchronization points
 
 	uint8_t i;
-
-	for (i = 0; i < PMU_SAMPLES; i++) {
-		pmu_values[i] = hal_register_read(RG_PHY_PMU_VALUE);
-		//_delay_us(8); // values is updates every 8us
+	for (i=0; i < PMU_MEASUREMENTS; i++) {
+		at86rf233_setFrequency(2322 + (i * PMU_STEP), 0);
+		at86rf233_receiverPMU(pmu_values[i]);
+		at86rf233_senderPMU();
+		//while(true) {};
+		wait_for_timer2(5);
 	}
-
-	wait_for_timer2(5);
-
-	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
-	hal_register_write(RG_TRX_STATE, CMD_TX_START);
 
 	wait_for_timer2(6);
 
+
+
 	printf("rssi: %u\n", rssi);
 
-	for (i = 0; i < PMU_SAMPLES; i++) {
-		printf("pmu[%u]: %u\n", i, pmu_values[i]);
+	uint8_t j;
+	for (j = 0; j < PMU_MEASUREMENTS; j++) {
+		for (i = 0; i < PMU_SAMPLES; i++) {
+			printf("pmu[%u][%u]: %u\n", j, i, pmu_values[j][i]);
+		}
 	}
 
 //	while (1) {
@@ -602,36 +621,26 @@ void at86rf233_pmuMagicReflector() {
 	hal_register_write(RG_TST_AGC, 0x09);		// TODO: set gain according to rssi
 
 	wait_for_timer2(4);
-
-	at86rf233_setFrequency(2500, 1);
-
-	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
-	hal_register_write(RG_TRX_STATE, CMD_TX_START);
-
-	wait_for_timer2(5);
-
-	hal_register_write(RG_TRX_STATE, CMD_FORCE_PLL_ON);
-	hal_register_write(RG_TRX_STATE, CMD_RX_ON);
-
-	_delay_us(50); // wait for sender to be ready
-
-#define PMU_SAMPLES 4
-
-	uint8_t pmu_values[PMU_SAMPLES];
+	start_timer2(10);					// timer counts to 18, we have 580us between synchronization points
 
 	uint8_t i;
-
-	for (i = 0; i < PMU_SAMPLES; i++) {
-		pmu_values[i] = hal_register_read(RG_PHY_PMU_VALUE);
-		//_delay_us(8); // values is updates every 8us
+	for (i=0; i < PMU_MEASUREMENTS; i++) {
+		at86rf233_setFrequency(2322 + (i * PMU_STEP), 1);
+		at86rf233_senderPMU();
+		at86rf233_receiverPMU(pmu_values[i]);
+		//while(true) {};
+		wait_for_timer2(5);
 	}
 
 	wait_for_timer2(6);
 
 	printf("rssi: %u\n", rssi);
 
-	for (i = 0; i < PMU_SAMPLES; i++) {
-		printf("pmu[%u]: %u\n", i, pmu_values[i]);
+	uint8_t j;
+	for (j = 0; j < PMU_MEASUREMENTS; j++) {
+		for (i = 0; i < PMU_SAMPLES; i++) {
+			printf("pmu[%u][%u]: %u\n", j, i, pmu_values[j][i]);
+		}
 	}
 
 //	while (1) {
