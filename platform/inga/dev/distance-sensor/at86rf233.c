@@ -77,10 +77,13 @@
 #define PMU_CALIB_X  132.76889372k		// linear part
 #define PMU_CALIB_B  0.59048228802k		// constant part
 
+#define PMU_DIST_OFFSET 1.092k			// distance offset from hardware (meter)
+#define PMU_DIST_SLOPE	149.896229k		// slope calculated from sample distance
+
 // configuration of signaling on the LEDs
 // LEDs can be disabled to enabled measurement of power consumption
 #define PMU_GREEN_LED	(PMU_LED_ON_WHILE_RANGING | PMU_LED_ON_WHILE_CALC)
-#define PMU_YELLOW_LED	PMU_LED_ENABLE_ON_ERROR
+#define PMU_YELLOW_LED	PMU_LED_ON_WHILE_PMU_READ
 
 // possibilities to display on LEDs
 #define PMU_LED_NONE				0	// do not change LEDs
@@ -387,11 +390,16 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 				// do basic calculations to save memory
 				int16_t v = local_pmu_values[i+last_start]-frame->result_confirm.result_data[i];
 
+				//v /= 2;	// active reflector measured phase twice
+
+
 				if (v > 127) {
 					v -= 256;
 				} else if (v < -128) {
 					v += 256;
 				}
+
+
 
 				// overwrite data in local array
 				signed_local_pmu_values[i+last_start] = (int8_t)v;
@@ -1107,7 +1115,7 @@ PROCESS_THREAD(ranging_process, ev, data)
 	// calculate distance from peak
 	fract m = (2.0k * peak_idx) / (1.0k * FFT_N); // take care of 500 kHz spacing
 	PRINTF("DISTANCE_PROCESS: m: %f\n", (float)m);
-	accum dist = (PMU_CALIB_X2 * m * m + PMU_CALIB_X * m - PMU_CALIB_B);
+	accum dist = (PMU_DIST_SLOPE * m - PMU_DIST_OFFSET);
 
 
 	// check if measurement was successful
