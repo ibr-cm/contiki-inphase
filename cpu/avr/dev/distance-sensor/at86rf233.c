@@ -47,6 +47,7 @@
 #include "radio/rf230bb/rf230bb.h"
 #include "leds.h"
 #include "net/packetbuf.h"
+#include "dev/watchdog.h"
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
@@ -179,6 +180,8 @@ void at86rf233_statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 
 			// send RESULT_REQUEST
 			fsm_state = RESULT_REQUESTED;
+
+			fsm_state = IDLE;				// results are not implemented yet
 		} else {
 			// all other frames are invalid here
 		}
@@ -201,6 +204,8 @@ void at86rf233_statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 		if (frame_type == TIME_SYNC_REQUEST) {
 			at86rf233_pmuMagicReflector();
 			fsm_state = WAIT_FOR_RESULT_REQ;
+
+			fsm_state = IDLE;				// results are not implemented yet
 		} else {
 			// all other frames are invalid here
 		}
@@ -284,7 +289,7 @@ void at86rf233_input(const linkaddr_t *src, uint16_t msg_len, void *msg) {
 		at86rf233_statemachine(frame_basic->frame_type, &frame_basic->content);
 	}
 
-	printf("message received!\n");
+	printf("AT86RF233_input: message received!\n");
 }
 
 /*---------------------------------------------------------------------------*/
@@ -332,14 +337,76 @@ void set_max_timer2(uint8_t max) {
 	TIFR2 = 0xFF;		// clear flags
 }
 
-void wait_for_timer2(void) {
+void wait_for_timer2(uint8_t id) {
 	if (TIFR2 & (1 << OCF2A)) {
-		printf("ERROR: TIMER2 compare match missed, timing can be corrupted!\n");
+		printf("ERROR on id %u: TIMER2 compare match missed, timing can be corrupted!\n", id);
 	}
 	while (!(TIFR2 & (1 << OCF2A))){}	// wait for compare match
 	TIFR2 = 0xFF;
+	leds_toggle(1);						// show that the timer ran out (debugging on oscilloscope)
 }
 /*---------------------------------------------------------------------------*/
+
+void wait_for_dig2(void) {
+	// wait for DIG2
+	leds_on(2);
+	while ((PINB & (1<<PB0)) == 0) {}	// TODO: define this input pin in the platform
+	while ((PINB & (1<<PB0)) == 1) {}	// wait for falling edge, these are closer together than the rising edges
+	set_max_timer2(20);
+	leds_off(2);
+}
+
+uint8_t rf230_state;
+uint8_t rg_phy_tx_pwr;
+uint8_t rg_xah_ctrl_1;
+uint8_t rg_trx_ctrl_1;
+uint8_t rg_tst_sdm;
+uint8_t rg_trx_ctrl_0;
+uint8_t rg_rx_syn;
+uint8_t rg_tst_agc;
+uint8_t rg_cc_ctrl_1;
+uint8_t rg_cc_ctrl_0;
+
+void backup_registers(void) {
+	// backup radio state
+	rf230_state = radio_get_trx_state();
+
+	rg_phy_tx_pwr = hal_register_read(RG_PHY_TX_PWR);
+	rg_xah_ctrl_1 = hal_register_read(RG_XAH_CTRL_1);
+	rg_trx_ctrl_1 = hal_register_read(RG_TRX_CTRL_1);
+	rg_tst_sdm = hal_register_read(RG_TST_SDM);
+	rg_trx_ctrl_0 = hal_register_read(RG_TRX_CTRL_0);
+	rg_rx_syn = hal_register_read(RG_RX_SYN);
+	rg_tst_agc = hal_register_read(RG_TST_AGC);
+	rg_cc_ctrl_1 = hal_register_read(RG_CC_CTRL_1);
+	rg_cc_ctrl_0 = hal_register_read(RG_CC_CTRL_0);
+}
+
+void restore_registers(void) {
+	// restore radio state
+	hal_subregister_write(SR_TRX_CMD, CMD_FORCE_TRX_OFF);
+	hal_subregister_write(SR_TRX_CMD, rf230_state);
+
+	hal_register_write(RG_PHY_TX_PWR, rg_phy_tx_pwr);
+	hal_register_write(RG_XAH_CTRL_1, rg_xah_ctrl_1);
+	hal_register_write(RG_TRX_CTRL_1, rg_trx_ctrl_1);
+	hal_register_write(RG_TST_SDM, rg_tst_sdm);
+	hal_register_write(RG_TRX_CTRL_0, rg_trx_ctrl_0);
+	hal_register_write(RG_RX_SYN, rg_rx_syn);
+	hal_register_write(RG_TST_AGC, rg_tst_agc);
+	hal_register_write(RG_CC_CTRL_1, rg_cc_ctrl_1);
+	hal_register_write(RG_CC_CTRL_0, rg_cc_ctrl_0);
+
+	hal_register_read(RG_IRQ_STATUS);				// clear all pending interrupts
+}
+
+void restore_initial_status(void) {
+	// restore the system and run normally again
+	restore_timer2();
+	restore_registers();		// reset and initialize the radio
+	watchdog_start();
+	sei();
+}
 
 void at86rf233_pmuMagicInitiator() {
 	printf("entered PMU Initiator\n");
@@ -349,6 +416,7 @@ void at86rf233_pmuMagicInitiator() {
 
 	cli();
 	watchdog_stop();
+	backup_registers();
 
 	init_timer2();
 
@@ -357,27 +425,79 @@ void at86rf233_pmuMagicInitiator() {
 	hal_subregister_write(SR_ARET_TX_TS_EN, 0x1);	// signal frame transmission via DIG2
 	hal_subregister_write(SR_IRQ_2_EXT_EN, 0x1);	// enable time stamping via DIG2
 
-	// wait for DIG2
-	leds_on(2);
-	while ((PINB & (1<<PB0)) == 0) {}	// TODO: define this input pin in the platform
-	while ((PINB & (1<<PB0)) == 1) {}	// wait for falling edge
-	set_max_timer2(20);
-	leds_off(2);
+	// wait for sync signal
+	wait_for_dig2();
 
 	// now in sync with the reflector
 
 	hal_subregister_write(SR_TX_RX, 0);			// RX PLL frequency is selected
 	hal_subregister_write(SR_RX_PDT_DIS, 1);	// RX Path is disabled
 
-	while (1) {
-		leds_toggle(1);
-		wait_for_timer2();
+	wait_for_timer2(0);
+
+	hal_subregister_write(SR_PMU_EN, 1);		// enable PMU
+	hal_subregister_write(SR_MOD_SEL, 1);		// manual control of modulation data
+	hal_subregister_write(SR_MOD, 0);			// continuous 0 chips for modulation
+	hal_subregister_write(SR_TX_RX_SEL, 1);		// manual control of PLL frequency mode
+
+	wait_for_timer2(1);
+
+	uint8_t fb_data[128] = {0};					// setup a framebuffer with all zeroes
+	fb_data[0] = 0x7F;							// set frame length to 127 (maximum)
+	hal_frame_write(fb_data, 128);				// copy data to sram, framebuffer section
+
+	// antenna diversity control is skipped, we only have one antenna
+
+	wait_for_timer2(2);
+
+	// measure RSSI
+	hal_subregister_write(SR_TRX_CMD, CMD_FORCE_PLL_ON);
+	hal_subregister_write(SR_TRX_CMD, CMD_RX_ON);
+
+	_delay_us(200); // wait some time for sender to be ready...
+
+	uint8_t rssi = hal_subregister_read(SR_RSSI);
+	hal_register_write(RG_TST_AGC, 0x09);		// TODO: set gain according to rssi
+
+	wait_for_timer2(3);
+
+	hal_subregister_write(SR_TRX_CMD, CMD_FORCE_PLL_ON);
+	hal_subregister_write(SR_TRX_CMD, CMD_TX_START);
+
+	wait_for_timer2(4);
+
+	hal_register_write(RG_CC_CTRL_1, 0x09);
+	hal_register_write(RG_CC_CTRL_0, 0x85);		// 2500.5 MHz
+
+	hal_subregister_write(SR_TRX_CMD, CMD_FORCE_PLL_ON);
+	hal_subregister_write(SR_TRX_CMD, CMD_RX_ON);
+
+	_delay_us(200); // wait for sender to be ready
+
+#define PMU_SAMPLES 4
+
+	uint8_t pmu_values[PMU_SAMPLES];
+
+	uint8_t i;
+
+	for (i = 0; i < PMU_SAMPLES; i++) {
+		pmu_values[i] = hal_register_read(RG_PHY_PMU_VALUE);
+		_delay_us(8); // values is updates every 8us
 	}
 
-	restore_timer2();
+	wait_for_timer2(5);
 
-	watchdog_start();
-	sei();
+	printf("rssi: %u\n", rssi);
+
+	for (i = 0; i < PMU_SAMPLES; i++) {
+		printf("pmu[%u]: %u\n", i, pmu_values[i]);
+	}
+
+//	while (1) {
+//		wait_for_timer2();
+//	}
+
+	restore_initial_status();
 }
 
 void at86rf233_pmuMagicReflector() {
@@ -388,6 +508,7 @@ void at86rf233_pmuMagicReflector() {
 
 	cli();
 	watchdog_stop();
+	backup_registers();
 
 	init_timer2();
 
@@ -407,16 +528,13 @@ void at86rf233_pmuMagicReflector() {
 	//packetbuf_set_addr(PACKETBUF_ADDR_RECEIVER, &initiator_requested);
 	//packetbuf_set_addr(PACKETBUF_ADDR_SENDER, &linkaddr_node_addr);
 	//packetbuf_compact();
-	hal_subregister_write(SR_TRX_CMD, TX_ARET_ON);
+	hal_subregister_write(SR_TRX_CMD, CMD_TX_ARET_ON);
 	hal_set_slptr_low();
 	hal_set_slptr_high(); // send the packet at the latest time possible
 
-	// wait for DIG2
-	leds_on(2);
-	while ((PINB & (1<<PB0)) == 0) {}	// TODO: define this input pin in the platform
-	while ((PINB & (1<<PB0)) == 1) {}	// wait for falling edge
-	set_max_timer2(20);
-	leds_off(2);
+
+	// wait for sync signal
+	wait_for_dig2();
 
 	// now in sync with the initiator
 
@@ -424,13 +542,52 @@ void at86rf233_pmuMagicReflector() {
 	hal_subregister_write(SR_TX_RX, 1);			// TX PLL frequency is selected
 	hal_subregister_write(SR_RX_PDT_DIS, 1);	// RX Path is disabled
 
-	while (1) {
-		leds_toggle(1);
-		wait_for_timer2();
-	}
+	wait_for_timer2(0);
 
-	restore_timer2();
+	hal_subregister_write(SR_PMU_EN, 1);		// enable PMU
+	hal_subregister_write(SR_MOD_SEL, 1);		// manual control of modulation data
+	hal_subregister_write(SR_MOD, 0);			// continuous 0 chips for modulation
+	hal_subregister_write(SR_TX_RX_SEL, 1);		// manual control of PLL frequency mode
 
-	watchdog_start();
-	sei();
+	wait_for_timer2(1);
+
+	uint8_t fb_data[128] = {0};					// setup a framebuffer with all zeroes
+	fb_data[0] = 0x7F;							// set frame length to 127 (maximum)
+	hal_frame_write(fb_data, 128);				// copy data to sram, framebuffer section
+
+	// antenna diversity control is skipped, we only have one antenna
+
+	wait_for_timer2(2);
+
+	// measure RSSI
+	hal_subregister_write(SR_TRX_CMD, CMD_FORCE_PLL_ON);
+	hal_subregister_write(SR_TRX_CMD, CMD_TX_START);
+
+	wait_for_timer2(3);
+
+	hal_subregister_write(SR_TRX_CMD, CMD_FORCE_PLL_ON);
+	hal_subregister_write(SR_TRX_CMD, CMD_RX_ON);
+
+	_delay_us(200); // wait some time for sender to be ready...
+
+	uint8_t rssi = hal_subregister_read(SR_RSSI);
+	hal_register_write(RG_TST_AGC, 0x09);		// TODO: set gain according to rssi
+
+	wait_for_timer2(4);
+
+	hal_register_write(RG_CC_CTRL_1, 0x09);
+	hal_register_write(RG_CC_CTRL_0, 0x85);		// 2500.5 MHz
+
+	hal_subregister_write(SR_TRX_CMD, CMD_FORCE_PLL_ON);
+	hal_subregister_write(SR_TRX_CMD, CMD_TX_START);
+
+	wait_for_timer2(5);
+
+	printf("rssi: %u\n", rssi);
+
+//	while (1) {
+//		wait_for_timer2();
+//	}
+
+	restore_initial_status();
 }
