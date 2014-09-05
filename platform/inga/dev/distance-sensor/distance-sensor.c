@@ -41,7 +41,6 @@
 const struct sensors_sensor distance_sensor;
 static uint8_t initialized = 0;
 static uint8_t ready = 0;
-static uint8_t ranging_allowed = 0;
 /*---------------------------------------------------------------------------*/
 static int
 value(int type)
@@ -111,13 +110,8 @@ configure(int type, int c)
     	return at86rf233_start_ranging();
 
     case DISTANCE_ALLOW_RANGING:
-    	if (c) {
-    		ranging_allowed = 1;
-    	}
-    	else {
-    		ranging_allowed = 0;
-    	}
-    	return 1;
+    	at86rf233_set_allow_ranging(c);
+    	return 0;
 
   }
   return 0;

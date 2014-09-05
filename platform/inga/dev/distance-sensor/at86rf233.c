@@ -123,9 +123,9 @@ struct {
 	linkaddr_t reflector;						// address of the reflector
 	linkaddr_t initiator;						// address of the initiator that issued the current measurement
 	uint8_t raw_output;							// if 1, output PMU data to serial port
+	uint8_t allow_ranging;
 } settings;
 
-// TODO: allocate these buffers at runtime depending on settings (Contiki mmem)
 // allocate an array with 206 bytes, this works for full spectrum at 1 MHz steps
 uint8_t local_pmu_values[PMU_MAXIMUM_FREQUENCY-PMU_MINIMUM_FREQUENCY+1];
 int8_t* signed_local_pmu_values = (int8_t*)local_pmu_values;	// reuse buffer to save memory
@@ -165,9 +165,8 @@ uint8_t at86rf233_init(void) {
 	linkaddr_copy(&settings.reflector, &linkaddr_null); // invalidate reflector address
 	linkaddr_copy(&settings.initiator, &linkaddr_null); // invalidate initiator_requested address
 
-	// TODO: init some fool proof settings here that measure rather okayish...
-
 	settings.raw_output = 0;
+	settings.allow_ranging = 0; // ranging is disabled by default
 
 	if (!at86rf233_available()) {
 		status_code = DISTANCE_NO_RF233;
@@ -229,6 +228,15 @@ uint8_t at86rf233_set_raw_output(uint8_t raw) {
 	return 0;
 }
 
+uint8_t at86rf233_set_allow_ranging(uint8_t allow) {
+	if (allow > 0) {
+		settings.allow_ranging = 1;
+	} else {
+		settings.allow_ranging = 0;
+	}
+	return 0;
+}
+
 // this gets call from the timeout_timer when it expires
 static void reset_statemachine() {
 	fsm_state = IDLE;
@@ -245,7 +253,6 @@ static void reset_statemachine() {
 }
 
 static void send_serial(void) {
-    //rs232_send(RS232_PORT_0, SERIAL_FRAME_START);
 	binary_start_frame();
 
     // send number of samples per frequency
@@ -260,15 +267,9 @@ static void send_serial(void) {
 	// send total amount of samples
 	binary_send_short(PMU_MEASUREMENTS);
 
-    uint16_t j;
-    for (j = 0; j < PMU_MEASUREMENTS; j++)
-    {
-    	// TODO: use binary_send_data() here
-    	// transmit data
-    	binary_send_byte(local_pmu_values[j]);
-    }
+	// transmit data
+	binary_send_data(&local_pmu_values, PMU_MEASUREMENTS);
 
-    //rs232_send(RS232_PORT_0, SERIAL_FRAME_END);
     binary_end_frame();
 }
 
@@ -276,14 +277,10 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 
 	PRINTF("DISTANCE: state: frame_type: %u, fsm_state: %u\n", frame_type, fsm_state);
 
-	_delay_us(25); // FIXME: this is some race condition
-
 	switch (fsm_state) {
 	case IDLE:
 	{
 		if (frame_type == RANGE_REQUEST_START) {
-			// TODO: check if ranging is possible
-
 			status_code = DISTANCE_RUNNING;
 			next_status_code = DISTANCE_NO_REFLECTOR;
 			ctimer_set(&timeout_timer, MEASUREMENT_TIMEOUT, reset_statemachine, NULL); // setup timeout_timer
@@ -296,23 +293,24 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 			fsm_state = RANGING_REQUESTED;
 		}
 		else if (frame_type == RANGE_REQUEST) {
-			// TODO: check if ranging is possible
+			// check if ranging is allowed
+			if (!settings.allow_ranging) {
+				PRINTF("DISTANCE: ranging request ignored (ranging not allowed)\n");
+			} else {
+				status_code = DISTANCE_RUNNING;
+				next_status_code = DISTANCE_TIMEOUT;
+				ctimer_set(&timeout_timer, MEASUREMENT_TIMEOUT, reset_statemachine, NULL); // setup timeout_timer
 
-			// TODO: save sent configuration data
-
-			status_code = DISTANCE_RUNNING;
-			next_status_code = DISTANCE_TIMEOUT;
-			ctimer_set(&timeout_timer, MEASUREMENT_TIMEOUT, reset_statemachine, NULL); // setup timeout_timer
-
-			// send RANGE_ACCEPT
-			frame_range_basic_t f;
-			f.frame_type = RANGE_ACCEPT;
-			f.content.range_accept.ranging_accept = RANGE_ACCEPT_STATUS_SUCCESS;
-			f.content.range_accept.reject_reason = 0;
-			f.content.range_accept.accepted_ranging_method = RANGING_METHOD_PMU;
-			f.content.range_accept.accepted_capabilities = 0x00;
-			AT86RF233_NETWORK.send(settings.initiator, sizeof(frame_range_accept_t)+1, &f);
-			fsm_state = RANGING_ACCEPTED;
+				// send RANGE_ACCEPT
+				frame_range_basic_t f;
+				f.frame_type = RANGE_ACCEPT;
+				f.content.range_accept.ranging_accept = RANGE_ACCEPT_STATUS_SUCCESS;
+				f.content.range_accept.reject_reason = 0;
+				f.content.range_accept.accepted_ranging_method = RANGING_METHOD_PMU;
+				f.content.range_accept.accepted_capabilities = 0x00;
+				AT86RF233_NETWORK.send(settings.initiator, sizeof(frame_range_accept_t)+1, &f);
+				fsm_state = RANGING_ACCEPTED;
+			}
 		} else {
 			// all other frames are invalid here
 			status_code = DISTANCE_IDLE;
@@ -789,10 +787,11 @@ static int8_t pmu_magic(uint8_t type) {
 	// reflector sends the synchronization frame
 	if (type) {
 		// send PMU start
-		frame_range_basic_t f;
-		f.frame_type = PMU_START;
 
 		// TODO: send the correct frame here, just to sleep well...
+
+		//frame_range_basic_t f;
+		//f.frame_type = PMU_START;
 
 		//AT86RF233_NETWORK.send(initiator_requested, 1, &f);
 
@@ -1045,9 +1044,9 @@ PROCESS_THREAD(ranging_process, ev, data)
 	}
 	PROCESS_PAUSE();
 
-	for (j = 0; j < FFT_N; j++) {
-		//printf("autocorr: %d\n", autocorr_values[j]);
-	}
+	/*for (j = 0; j < FFT_N; j++) {
+		printf("autocorr: %d\n", autocorr_values[j]);
+	}*/
 
 	// run fft
 	static complex_t fft_buff[FFT_N];							// FTT buffer
