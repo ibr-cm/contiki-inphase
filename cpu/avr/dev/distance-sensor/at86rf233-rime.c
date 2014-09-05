@@ -55,9 +55,17 @@
 
 #define AT86RF233_RIME_CHANNEL 142
 
+#define DEBUG 0
+#if DEBUG
+#include <avr/pgmspace.h>
+#define PRINTF(FORMAT,args...) printf_P(PSTR(FORMAT),##args)
+#else
+#define PRINTF(...)
+#endif
+
 static void recv_uc(struct unicast_conn *c, const linkaddr_t *from)
 {
-  printf("DISTANCE: unicast message received from %d.%d: '%s'\n", from->u8[0], from->u8[1], (char *) packetbuf_dataptr());
+  PRINTF("DISTANCE: unicast message received from %d.%d: '%s'\n", from->u8[0], from->u8[1], (char *) packetbuf_dataptr());
   at86rf233_input(from, packetbuf_datalen(), packetbuf_dataptr());
 }
 static const struct unicast_callbacks unicast_callbacks = {recv_uc};
@@ -70,7 +78,7 @@ uint8_t at86rf233_rime_init(void) {
 
 uint8_t at86rf233_rime_send(linkaddr_t dest, uint8_t msg_len, void *msg) {
 	packetbuf_copyfrom(msg, msg_len);
-	printf("DISTANCE: Message sent to %d.%d\n", dest.u8[0], dest.u8[1]); // debug message
+	PRINTF("DISTANCE: Message sent to %d.%d\n", dest.u8[0], dest.u8[1]); // debug message
 	unicast_send(&uc, &dest);
 	return 0;
 }

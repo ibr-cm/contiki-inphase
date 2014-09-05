@@ -53,6 +53,7 @@
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
+#include <avr/pgmspace.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -68,6 +69,13 @@
 
 #define AT86RF233_ENTER_CRITICAL_REGION( ) {uint8_t volatile saved_sreg = SREG; cli( )
 #define AT86RF233_LEAVE_CRITICAL_REGION( ) SREG = saved_sreg;}
+
+#define DEBUG 0
+#if DEBUG
+#define PRINTF(FORMAT,args...) printf_P(PSTR(FORMAT),##args)
+#else
+#define PRINTF(...)
+#endif
 
 linkaddr_t target;
 linkaddr_t initiator_requested;
@@ -142,7 +150,7 @@ uint8_t at86rf233_startRanging(void) {
 }
 
 uint8_t at86rf233_setTarget(linkaddr_t *addr) {
-	printf("DISTANCE: Set target to %d.%d\n", addr->u8[0], addr->u8[1]); // debug message
+	PRINTF("DISTANCE: Set target to %d.%d\n", addr->u8[0], addr->u8[1]); // debug message
 	linkaddr_copy(&target, addr);
 	return 1;
 }
@@ -184,7 +192,9 @@ void at86rf233_sendSerial(void) {
 
 void at86rf233_statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 
-	printf("state: frame_type: %u, fsm_state: %u\n", frame_type, fsm_state);
+	PRINTF("state: frame_type: %u, fsm_state: %u\n", frame_type, fsm_state);
+
+	_delay_us(25); // FIXME: this is some race condition
 
 	switch (fsm_state) {
 	case IDLE:
@@ -229,6 +239,8 @@ void at86rf233_statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 			AT86RF233_NETWORK.send(target, 1, &f);
 
 			at86rf233_pmuMagicInitiator();
+
+			//_delay_ms(10); // wait for reflector to be finished with the magic...
 
 			// send RESULT_REQUEST
 			frame_range_basic_t f2;
@@ -327,7 +339,7 @@ void at86rf233_statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 }
 
 void at86rf233_input(const linkaddr_t *src, uint16_t msg_len, void *msg) {
-	printf("AT86RF233_input: message received!\n");
+	PRINTF("AT86RF233_input: message received!\n");
 	frame_range_basic_t *frame_basic = msg;
 	uint8_t msg_accepted = 0;
 	switch (frame_basic->frame_type) {
@@ -440,7 +452,7 @@ void start_timer2(uint8_t max) {
 
 void wait_for_timer2(uint8_t id) {
 	if (TIFR2 & (1 << OCF2A)) {
-		printf("ERROR on id %u: TIMER2 compare match missed, timing can be corrupted!\n", id);
+		printf_P(PSTR("ERROR on id %u: TIMER2 compare match missed, timing can be corrupted!\n"), id);
 	}
 	while (!(TIFR2 & (1 << OCF2A))){}	// wait for compare match
 	TIFR2 = 0xFF;
@@ -568,7 +580,7 @@ void at86rf233_receiverPMU(uint8_t* pmu_values) {
 }
 
 void at86rf233_pmuMagicInitiator() {
-	printf("entered PMU Initiator\n");
+	PRINTF("entered PMU Initiator\n");
 
 	leds_off(2);
 	leds_off(1);
@@ -649,7 +661,7 @@ void at86rf233_pmuMagicInitiator() {
 }
 
 void at86rf233_pmuMagicReflector() {
-	printf("entered PMU Reflector\n");
+	PRINTF("entered PMU Reflector\n");
 
 	leds_off(2);
 	leds_off(1);
@@ -676,6 +688,9 @@ void at86rf233_pmuMagicReflector() {
 	//packetbuf_set_addr(PACKETBUF_ADDR_RECEIVER, &initiator_requested);
 	//packetbuf_set_addr(PACKETBUF_ADDR_SENDER, &linkaddr_node_addr);
 	//packetbuf_compact();
+
+	_delay_ms(2); // wait for initiator, it needs more time before it listens to DIG2
+
 	hal_subregister_write(SR_TRX_CMD, CMD_TX_ARET_ON);
 	hal_set_slptr_low();
 	hal_set_slptr_high(); // send the packet at the latest time possible
