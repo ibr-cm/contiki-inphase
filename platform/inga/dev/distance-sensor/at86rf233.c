@@ -1082,7 +1082,7 @@ static int8_t pmu_magic(pmu_magic_role_t role, pmu_magic_mode_t mode) {
 	}
 
 	// TODO: set gain according to rssi
-	hal_register_write(RG_TST_AGC, 0x09);
+	hal_register_write(RG_TST_AGC, 0x08);
 
 	wait_for_timer2(4);
 
