@@ -72,7 +72,9 @@ extern const struct sensors_sensor distance_sensor;
 // allow the sensor to answer ranging requests from other nodes
 #define DISTANCE_ALLOW_RANGING 2
 // output raw measurement data on stdout at initiator node for post-processing
-#define DISTANCE_RAW_OUTPUT	   3
+#define DISTANCE_RAW_OUTPUT    3
+// compute distance on sensor node
+#define DISTANCE_COMPUTE       4
 
 // Status codes for SENSORS_READY
 #define DISTANCE_INVALID      0

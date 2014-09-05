@@ -139,6 +139,7 @@ struct {
 	linkaddr_t initiator;						// address of the initiator that issued the current measurement
 	uint8_t raw_output;							// if 1, output PMU data to serial port
 	uint8_t allow_ranging;
+	uint8_t compute;
 } settings;
 
 // allocate an array for the measurement results
@@ -262,6 +263,15 @@ uint8_t at86rf233_set_allow_ranging(uint8_t allow) {
 		settings.allow_ranging = 1;
 	} else {
 		settings.allow_ranging = 0;
+	}
+	return 0;
+}
+
+uint8_t at86rf233_set_compute(uint8_t compute) {
+	if (compute > 0) {
+		settings.compute = 1;
+	} else {
+		settings.compute = 0;
 	}
 	return 0;
 }
@@ -1188,95 +1198,97 @@ PROCESS_THREAD(ranging_process, ev, data)
 		PROCESS_EXIT();
 	}
 
-	// start calculation of distance
+	if (settings.compute) {
+		// start calculation of distance
 
-	#if PMU_GREEN_LED & PMU_LED_ON_WHILE_CALC
-		leds_on(LEDS_GREEN);
-	#endif
-	#if PMU_YELLOW_LED & PMU_LED_ON_WHILE_CALC
-		leds_on(LEDS_YELLOW);
-	#endif
-/*
-	static uint16_t j; // 16 bit counter for loops
+		#if PMU_GREEN_LED & PMU_LED_ON_WHILE_CALC
+			leds_on(LEDS_GREEN);
+		#endif
+		#if PMU_YELLOW_LED & PMU_LED_ON_WHILE_CALC
+			leds_on(LEDS_YELLOW);
+		#endif
 
-	// calculate autocorrelation
-	#if FFT_N < PMU_MEASUREMENTS
-		#error FFT size too small!
-	#endif
-	static int16_t autocorr_values[FFT_N];
-	autocorr(signed_local_pmu_values, autocorr_values, PMU_MEASUREMENTS);
-	PROCESS_PAUSE();
+		static uint16_t j; // 16 bit counter for loops
 
-	// fill rest of window with zeroes
-	for (j = PMU_MEASUREMENTS; j < FFT_N; j++) {
-		autocorr_values[j] = 0;
-	}
-	PROCESS_PAUSE();
+		// calculate autocorrelation
+		#if FFT_N < PMU_MEASUREMENTS
+			#error FFT size too small!
+		#endif
+		static int16_t autocorr_values[FFT_N];
+		autocorr(signed_local_pmu_values, autocorr_values, PMU_MEASUREMENTS);
+		PROCESS_PAUSE();
 
-	// run fft
-	static complex_t fft_buff[FFT_N];							// FTT buffer
-	static uint16_t* fft_result = (uint16_t*)autocorr_values;	// reuse buffer to save memory
-	fft_input(autocorr_values, fft_buff);
-	PROCESS_PAUSE();
-	fft_execute(fft_buff);
-	PROCESS_PAUSE();
-	fft_output(fft_buff, fft_result);
-	PROCESS_PAUSE();
-
-	// find peak in fft result
-	uint16_t peak_idx = 0;
-	uint16_t peak_val = 0;
-	for (j = 0; j < FFT_N/2; j++) {
-		if (peak_val < fft_result[j]) {
-			peak_val = fft_result[j];
-			peak_idx = j;
+		// fill rest of window with zeroes
+		for (j = PMU_MEASUREMENTS; j < FFT_N; j++) {
+			autocorr_values[j] = 0;
 		}
-		//printf("fft: %u\n", fft_result[j]);
-	}
+		PROCESS_PAUSE();
 
-	//printf("peak_idx: %u\n", peak_idx);
+		// run fft
+		static complex_t fft_buff[FFT_N];							// FTT buffer
+		static uint16_t* fft_result = (uint16_t*)autocorr_values;	// reuse buffer to save memory
+		fft_input(autocorr_values, fft_buff);
+		PROCESS_PAUSE();
+		fft_execute(fft_buff);
+		PROCESS_PAUSE();
+		fft_output(fft_buff, fft_result);
+		PROCESS_PAUSE();
 
-	// calculate distance from peak
-	fract m = (2.0k * peak_idx) / (1.0k * FFT_N); // take care of 500 kHz spacing
-	PRINTF("DISTANCE_PROCESS: m: %f\n", (float)m);
-	accum dist = (PMU_DIST_SLOPE * m - PMU_DIST_OFFSET);
+		// find peak in fft result
+		uint16_t peak_idx = 0;
+		uint16_t peak_val = 0;
+		for (j = 0; j < FFT_N/2; j++) {
+			if (peak_val < fft_result[j]) {
+				peak_val = fft_result[j];
+				peak_idx = j;
+			}
+			//printf("fft: %u\n", fft_result[j]);
+		}
+
+		//printf("peak_idx: %u\n", peak_idx);
+
+		// calculate distance from peak
+		fract m = (2.0k * peak_idx) / (1.0k * FFT_N); // take care of 500 kHz spacing
+		PRINTF("DISTANCE_PROCESS: m: %f\n", (float)m);
+		accum dist = (PMU_DIST_SLOPE * m - PMU_DIST_OFFSET);
 
 
-	// check if measurement was successful
-	if (dist < 0) {
-		// the distance must always be positive, otherwise the measurement is useless
-		calc_status = DISTANCE_VALUE_ERROR;
-	} else {
-		// measurement was ok,
-		dist_last_meter = (uint8_t)dist;
-		dist_last_centimeter = (uint8_t)((dist-dist_last_meter)*100);
-
-		// calculate quality
-		// just use the peak value from the fft
-		if (peak_val > 255) {
-			dist_last_quality = 255;
+		// check if measurement was successful
+		if (dist < 0) {
+			// the distance must always be positive, otherwise the measurement is useless
+			calc_status = DISTANCE_VALUE_ERROR;
 		} else {
-			dist_last_quality = (uint8_t)peak_val;
+			// measurement was ok,
+			dist_last_meter = (uint8_t)dist;
+			dist_last_centimeter = (uint8_t)((dist-dist_last_meter)*100);
+
+			// calculate quality
+			// just use the peak value from the fft
+			if (peak_val > 255) {
+				dist_last_quality = 255;
+			} else {
+				dist_last_quality = (uint8_t)peak_val;
+			}
+
 		}
 
-	}
+		PRINTF("DISTANCE_PROCESS: ");
 
-	PRINTF("DISTANCE_PROCESS: ");
-
-	if (peak_val > 40) {
-		if (dist > 0) {
-			PRINTF("GOOD ");
+		if (peak_val > 40) {
+			if (dist > 0) {
+				PRINTF("GOOD ");
+			}
 		}
-	}
 
-	PRINTF("distance: %u.%u meter\n", (uint8_t)dist, (uint8_t)((dist-((uint8_t)dist))*100));
-*/
-	#if PMU_GREEN_LED & PMU_LED_ON_WHILE_CALC
-		leds_off(LEDS_GREEN);
-	#endif
-	#if PMU_YELLOW_LED & PMU_LED_ON_WHILE_CALC
-		leds_off(LEDS_YELLOW);
-	#endif
+		PRINTF("distance: %u.%u meter\n", (uint8_t)dist, (uint8_t)((dist-((uint8_t)dist))*100));
+
+		#if PMU_GREEN_LED & PMU_LED_ON_WHILE_CALC
+			leds_off(LEDS_GREEN);
+		#endif
+		#if PMU_YELLOW_LED & PMU_LED_ON_WHILE_CALC
+			leds_off(LEDS_YELLOW);
+		#endif
+	}
 
 	// everything is done
 	if (calc_status != DISTANCE_INVALID) {
