@@ -69,15 +69,9 @@
 
 #define PMU_START_FREQUENCY 2322 // start frequency for measurement
 #define PMU_SAMPLES 4	// number of samples that are taken for each frequency by both nodes
-#define PMU_SAMPLES_SHIFT 2 // bitshift to substitut the division by the PMU_SAMPLES
+#define PMU_SAMPLES_SHIFT 2 // bitshift to substitute the division by the PMU_SAMPLES
 #define PMU_MEASUREMENTS 200 // number of frequencies to measure
 #define PMU_STEP 1 // frequency step for measurement
-
-// special symbols for serial output of sensor data
-#define SERIAL_FRAME_START     0x3C
-#define SERIAL_FRAME_END       0x3E
-#define SERIAL_ESCAPE_BYTE     0x40
-#define SERIAL_ESCAPE_ADD      0x10
 
 #define AT86RF233_ENTER_CRITICAL_REGION( ) {uint8_t volatile saved_sreg = SREG; cli( )
 #define AT86RF233_LEAVE_CRITICAL_REGION( ) SREG = saved_sreg;}
@@ -113,7 +107,7 @@ struct {
 } settings;
 
 // TODO: allocate these buffers at runtime depending on settings (Contiki mmem)
-// allocate two arrays with 824 bytes each, this works for full spectrum at 1 MHz steps
+// allocate an array with 206 bytes, this works for full spectrum at 1 MHz steps
 uint8_t local_pmu_values[PMU_MAXIMUM_FREQUENCY-PMU_MINIMUM_FREQUENCY+1];
 int8_t* signed_local_pmu_values = (int8_t*)local_pmu_values;	// reuse buffer to save memory
 
@@ -862,9 +856,6 @@ static int8_t pmu_magic(uint8_t type) {
 
 	// wait for sync signal
 	if (!wait_for_dig2()) {
-		// DIG2 signal not found, abort measurement
-		// to be honest: if the reflector does not get the DIG2 from its own sending
-		// there must be something horribly wrong...
 		if (type) {
 			_delay_us(9.5243);	// DIG2 signal is on average 9.5243 us delayed on the initiator, reflector waits
 		}
@@ -953,6 +944,9 @@ static int8_t pmu_magic(uint8_t type) {
 		}
 		ret_val = 0;
 	} else {
+		// DIG2 signal not found, abort measurement
+		// to be honest: if the reflector does not get the DIG2 from its own sending
+		// there must be something horribly wrong...
 		ret_val = -1; // DIG2 signal not seen, abort!
 	}
 
