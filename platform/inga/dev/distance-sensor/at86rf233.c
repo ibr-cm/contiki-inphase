@@ -67,7 +67,7 @@
 #define PMU_MINIMUM_FREQUENCY 2322		// minimum frequency from AT86RF233 data sheet
 #define PMU_MAXIMUM_FREQUENCY 2527		// maximum frequency from AT86RF233 data sheet (maybe 2543.5 MHz will work)
 
-#define PMU_START_FREQUENCY 2322 // start frequency for measurement
+#define PMU_START_FREQUENCY 2400 // start frequency for measurement
 #define PMU_SAMPLES 4	// number of samples that are taken for each frequency by both nodes
 #define PMU_SAMPLES_SHIFT 2 // bitshift to substitute the division by the PMU_SAMPLES
 #define PMU_MEASUREMENTS 200 // number of frequencies to measure
@@ -928,14 +928,34 @@ static int8_t pmu_magic(uint8_t type) {
 
 		uint8_t i;
 		for (i=0; i < PMU_MEASUREMENTS; i++) {
-			switch (type) {
+			/*switch (type) {
 			case 0:		// initiator
-				setFrequency(2322 + (i * PMU_STEP), 0);
+				setFrequency(PMU_START_FREQUENCY + (i * PMU_STEP), 0);
 				receiver_pmu(&local_pmu_values[i]);
 				sender_pmu();
 				break;
 			default:	// reflector
-				setFrequency(2322 + (i * PMU_STEP), 1);
+				setFrequency(PMU_START_FREQUENCY + (i * PMU_STEP), 1);
+				sender_pmu();
+				receiver_pmu(&local_pmu_values[i]);
+				break;
+			}*/
+			// use 500 kHz spacing
+			uint8_t f, f_full, f_half;
+			switch (type) {
+			case 0:		// initiator
+				f = (i * PMU_STEP);
+				f_full = f >> 1;
+				f_half = f & 0x01;
+				setFrequency(PMU_START_FREQUENCY + f_full, f_half);
+				receiver_pmu(&local_pmu_values[i]);
+				sender_pmu();
+				break;
+			default:	// reflector
+				f = (i * PMU_STEP) + 1; // reflector is 500 kHz higher
+				f_full = f >> 1;
+				f_half = f & 0x01;
+				setFrequency(PMU_START_FREQUENCY + f_full, f_half);
 				sender_pmu();
 				receiver_pmu(&local_pmu_values[i]);
 				break;
@@ -1059,11 +1079,16 @@ PROCESS_THREAD(ranging_process, ev, data)
 		//printf("fft: %u\n", fft_result[j]);
 	}
 
-	printf("peak_idx: %u\n", peak_idx);
+	//printf("peak_idx: %u\n", peak_idx);
 
 	// calculate distance from peak
-	accum dist = (77.515678989k / (FFT_N) / (FFT_N) * peak_idx * peak_idx + 132.76889372k / (FFT_N) * peak_idx - 0.59048228802k);
-	printf("distance: %f\n", (float)dist);
+	accum dist = (77.515678989k / (FFT_N/2) / (FFT_N/2) * peak_idx * peak_idx + 132.76889372k / (FFT_N/2) * peak_idx - 0.59048228802k);
+
+	if (peak_val > 30) {
+		printf("GOOD ");
+	}
+
+	printf("distance: %.2f\n", (float)dist);
 
 
 	// check if measurement was successful
