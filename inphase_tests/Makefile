@@ -1,0 +1,26 @@
+CONTIKI_PROJECT = inphase
+all: $(CONTIKI_PROJECT).upload
+
+# Extra defines go here
+CFLAGS += -DINGA_CONF_RADIO_CHANNEL=25
+CFLAGS += -DPMU_GREEN_LED="(PMU_LED_ON_WHILE_RANGING | PMU_LED_ON_WHILE_CALC)"
+CFLAGS += -DPMU_YELLOW_LED="PMU_LED_TIMER_TOGGLE"
+
+ifdef INITIATOR_ADDR
+	CFLAGS += -DINITIATOR_ADDR=${INITIATOR_ADDR}
+endif
+
+ifdef REFLECTOR_ADDR
+	CFLAGS += -DREFLECTOR_ADDR=${REFLECTOR_ADDR}
+endif
+
+# Use floating point printf
+LDFLAGS += -Wl,-u,vfprintf -lprintf_flt -lm
+TARGET_LIBFILES += -lm
+
+TARGET=inga
+
+CONTIKI_WITH_RIME = 1
+
+CONTIKI = ..
+include $(CONTIKI)/Makefile.include
