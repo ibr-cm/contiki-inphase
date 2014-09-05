@@ -925,6 +925,9 @@ static int8_t pmu_magic(pmu_magic_role_t role, pmu_magic_mode_t mode) {
 	// this line is normally only done at the reflector:
 	hal_subregister_write(SR_TOM_EN, 0x0);			// disable TOM mode (unclear why this is done here)
 
+	// switch to a frequency where we are not likely being disturbed during synchronization
+	setFrequency(PMU_START_FREQUENCY, 0);
+
 	// reflector sends the synchronization frame
 	if (role == PMU_MAGIC_ROLE_REFLECTOR) {
 		// send PMU start
