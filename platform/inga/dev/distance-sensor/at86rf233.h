@@ -68,6 +68,7 @@
 #define PMU_START                0x12
 #define RESULT_REQUEST           0x21
 #define RESULT_CONFIRM           0x22
+#define NETWORK_TIMEOUT          0xFF  // fake frame type that signals a network timeout to the state machine
 
 #define RANGING_METHOD_PMU       0x01
 

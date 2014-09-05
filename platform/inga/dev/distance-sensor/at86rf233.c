@@ -99,6 +99,10 @@
 #define PMU_LED_ENABLE_ON_ERROR		16	// turn LED on on error, disable it on next measurement
 #define PMU_LED_ON_WHILE_PMU_READ	32	// turn LED on while the PMU values are read
 
+#define RANGE_REQUEST_RETRANSMISSIONS  0
+#define RANGE_ACCEPT_RETRANSMISSIONS   0
+#define RESULT_REQUEST_RETRANSMISSIONS 0
+
 #define AT86RF233_ENTER_CRITICAL_REGION( ) {uint8_t volatile saved_sreg = SREG; cli( )
 #define AT86RF233_LEAVE_CRITICAL_REGION( ) SREG = saved_sreg;}
 
@@ -119,10 +123,13 @@
 
 PROCESS(ranging_process, "AT86RF233 Ranging process");
 
+static void statemachine(uint8_t frame_type, frame_subframe_t *frame);
 static int8_t pmu_magic(uint8_t type);
 
 uint8_t status_code;
 uint8_t next_status_code;
+uint8_t retransmissions; // maximum number of allowed retransmissions for a frame (counts down to 0)
+uint8_t next_result_start;
 
 uint8_t dist_last_meter = 0;
 uint8_t dist_last_centimeter = 0;
@@ -140,7 +147,8 @@ struct {
 uint8_t local_pmu_values[PMU_VALUES_LEN];
 int8_t* signed_local_pmu_values = (int8_t*)local_pmu_values;	// reuse buffer to save memory
 
-#define MEASUREMENT_TIMEOUT (0.1 * CLOCK_SECOND)
+#define MESSAGE_TIMEOUT (0.1 * CLOCK_SECOND)
+#define RESULT_REQUEST_TIMEOUT (0.5 * CLOCK_SECOND)
 struct ctimer timeout_timer;  	// if this timer runs out, the measurement has
 								// failed due to a timeout in the network
 
@@ -373,6 +381,10 @@ static void active_reflector_subtract(uint16_t last_start, uint8_t *result_data,
 	}
 }
 
+static void trigger_network_timeout(void *ptr) {
+	statemachine(NETWORK_TIMEOUT, NULL);
+}
+
 static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 
 	PRINTF("DISTANCE: state: frame_type: %u, fsm_state: %u\n", frame_type, fsm_state);
@@ -382,24 +394,20 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 	{
 		if (frame_type == RANGE_REQUEST_START) {
 			status_code = DISTANCE_RUNNING;
-			next_status_code = DISTANCE_NO_REFLECTOR;
-			ctimer_set(&timeout_timer, MEASUREMENT_TIMEOUT, reset_statemachine, NULL); // setup timeout_timer
-
 			send_range_request();
-
+			retransmissions = RANGE_REQUEST_RETRANSMISSIONS; // maximum allowed retransmissions
+			ctimer_set(&timeout_timer, MESSAGE_TIMEOUT, trigger_network_timeout, NULL);
 			fsm_state = RANGING_REQUESTED;
-		}
-		else if (frame_type == RANGE_REQUEST) {
+		} else if (frame_type == RANGE_REQUEST) {
 			// check if ranging is allowed
 			if (!settings.allow_ranging) {
 				PRINTF("DISTANCE: ranging request ignored (ranging not allowed)\n");
+				fsm_state = IDLE;
 			} else {
 				status_code = DISTANCE_RUNNING;
-				next_status_code = DISTANCE_TIMEOUT;
-				ctimer_set(&timeout_timer, MEASUREMENT_TIMEOUT, reset_statemachine, NULL); // setup timeout_timer
-
 				send_range_accept();
-
+				retransmissions = RANGE_ACCEPT_RETRANSMISSIONS; // maximum allowed retransmissions
+				ctimer_set(&timeout_timer, MESSAGE_TIMEOUT, trigger_network_timeout, NULL);
 				fsm_state = RANGING_ACCEPTED;
 			}
 		} else {
@@ -412,22 +420,32 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 	// initiator states
 	case RANGING_REQUESTED:
 	{
-		if (frame_type == RANGE_ACCEPT) {
-			next_status_code = DISTANCE_TIMEOUT;
-			ctimer_restart(&timeout_timer); // partner sent valid next frame, reset timer
+		if (frame_type == NETWORK_TIMEOUT) {
+			if (retransmissions > 0) {
+				send_range_request();
+				retransmissions--;
+				ctimer_set(&timeout_timer, MESSAGE_TIMEOUT, trigger_network_timeout, NULL);
+			} else {
+				// too many retransmissions, abort ranging
+				next_status_code = DISTANCE_NO_REFLECTOR;
+				reset_statemachine();
+			}
+		} else if (frame_type == RANGE_ACCEPT) {
+			ctimer_stop(&timeout_timer); // stop timer for pmu_magic
 
 			send_time_sync_request();
 
-			ctimer_stop(&timeout_timer); // stop timer for pmu_magic
-			if (pmu_magic(0)) {
+			// NOTE: pmu_magic at reflector sends sync frame as response to TIME_SYMC_REQUEST
+			int8_t pmu_magic_result = pmu_magic(0);
+			if (pmu_magic_result) {
 				next_status_code = DISTANCE_NO_SYNC;
 				reset_statemachine(); // DIG2 timed out, abort!
 
 			} else {
-				ctimer_restart(&timeout_timer); // magic finished, restart timer
-
-				send_result_request(0);
-
+				next_result_start = 0;
+				send_result_request(next_result_start);
+				retransmissions = RESULT_REQUEST_RETRANSMISSIONS; // maximum allowed retransmissions
+				ctimer_set(&timeout_timer, MESSAGE_TIMEOUT, trigger_network_timeout, NULL);
 				fsm_state = RESULT_REQUESTED;
 			}
 		} else {
@@ -437,9 +455,18 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 	}
 	case RESULT_REQUESTED:
 	{
-		if (frame_type == RESULT_CONFIRM) {
-			next_status_code = DISTANCE_TIMEOUT;
-			ctimer_restart(&timeout_timer); // partner sent valid next frame, reset timer
+		if (frame_type == NETWORK_TIMEOUT) {
+			if (retransmissions > 0) {
+				send_result_request(next_result_start);
+				retransmissions--;
+				ctimer_set(&timeout_timer, MESSAGE_TIMEOUT, trigger_network_timeout, NULL);
+			} else {
+				// too many retransmissions, abort ranging
+				next_status_code = DISTANCE_TIMEOUT;
+				reset_statemachine();
+			}
+		} else if (frame_type == RESULT_CONFIRM) {
+			ctimer_stop(&timeout_timer);
 
 			// get last results from frame
 			uint16_t last_start = frame->result_confirm.result_start_address;
@@ -447,15 +474,18 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 
 			active_reflector_subtract(last_start, frame->result_confirm.result_data, result_length);
 
-			uint16_t next_start = last_start + result_length;
+			next_result_start = last_start + result_length;
 
-			send_result_request(next_start);
+			send_result_request(next_result_start);
+			retransmissions = RESULT_REQUEST_RETRANSMISSIONS;
 
-			if (next_start < PMU_MEASUREMENTS) {
+			if (next_result_start < PMU_MEASUREMENTS) {
+				// more data to receive
+				ctimer_set(&timeout_timer, MESSAGE_TIMEOUT, trigger_network_timeout, NULL);
 				fsm_state = RESULT_REQUESTED;
 			} else {
+				// got all results, finished
 				fsm_state = IDLE;
-				ctimer_stop(&timeout_timer); // done, stop timer
 			}
 		} else {
 			// all other frames are invalid here
@@ -466,14 +496,26 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 	// reflector states
 	case RANGING_ACCEPTED:
 	{
-		if (frame_type == TIME_SYNC_REQUEST) {
-			next_status_code = DISTANCE_TIMEOUT;
+		if (frame_type == NETWORK_TIMEOUT) {
+			if (retransmissions > 0) {
+				send_range_accept();
+				retransmissions--;
+				ctimer_set(&timeout_timer, MESSAGE_TIMEOUT, trigger_network_timeout, NULL);
+			} else {
+				// too many retransmissions, abort ranging
+				next_status_code = DISTANCE_TIMEOUT;
+				reset_statemachine();
+			}
+		} else if (frame_type == TIME_SYNC_REQUEST) {
 			ctimer_stop(&timeout_timer); // stop timer for pmu_magic
-			if (pmu_magic(1)) {
+
+			int8_t pmu_magic_result = pmu_magic(1);
+			if (pmu_magic_result) {
 				next_status_code = DISTANCE_NO_SYNC;
 				reset_statemachine(); // DIG2 timed out, abort!
 			} else {
-				ctimer_restart(&timeout_timer); // magic finished, restart timer
+				next_status_code = DISTANCE_TIMEOUT;
+				ctimer_set(&timeout_timer, RESULT_REQUEST_TIMEOUT, reset_statemachine, NULL); // magic finished, restart timer
 				fsm_state = WAIT_FOR_RESULT_REQ;
 			}
 		} else {
@@ -485,7 +527,7 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 	{
 		if (frame_type == RESULT_REQUEST) {
 			next_status_code = DISTANCE_TIMEOUT;
-			ctimer_restart(&timeout_timer); // partner sent valid next frame, reset timer
+			ctimer_stop(&timeout_timer); // partner sent valid next frame, stop timer
 
 			if (frame->result_request.result_data_type == RESULT_TYPE_PMU) {
 				// send a pmu result frame
@@ -494,8 +536,8 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 					// start address points outside of the pmu data, this indicates that the initiator does not need more data
 					fsm_state = IDLE;
 					status_code = DISTANCE_IDLE;
-					ctimer_stop(&timeout_timer); // done, stop timer
 				} else {
+					// initiator still needs results
 					uint8_t result_length;
 					if ((PMU_MEASUREMENTS - start_address) > RESULT_DATA_LENGTH) {
 						result_length = RESULT_DATA_LENGTH;
@@ -505,13 +547,15 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 
 					send_result_confirm(start_address, result_length);
 
+					// keep using RESULT_REQUEST_TIMEOUT, because initiator might take longer time to process results
+					ctimer_restart(&timeout_timer); // partner sent valid next frame, reset timer
+
 					fsm_state = WAIT_FOR_RESULT_REQ; // wait for more result requests
 				}
 			} else {
 				// this can be an RSSI result...
 				fsm_state = IDLE; // no other results allowed, return to idle
 				status_code = DISTANCE_IDLE;
-				ctimer_stop(&timeout_timer); // done, stop timer
 			}
 		} else {
 			// all other frames are invalid here
@@ -1064,9 +1108,8 @@ PROCESS_THREAD(ranging_process, ev, data)
 	}
 
 	// start a range measurement
-	ctimer_stop(&timeout_timer);
-	fsm_state = IDLE; // hard reset the statemachine, maybe it is stuck in some timed out measurement
-
+	ctimer_stop(&timeout_timer); // TODO: needed?
+	fsm_state = IDLE; // reset state machine
 	statemachine(RANGE_REQUEST_START, NULL);
 
 	while (fsm_state != IDLE) {
