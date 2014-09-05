@@ -82,7 +82,7 @@
 #define RESULT_TYPE_PMU          0x00
 #define RESULT_TYPE_RSSI         0x01
 
-#define RESULT_DATA_LENGTH       100
+#define RESULT_DATA_LENGTH       100  // number of byte to send in one result frame
 
 typedef struct {
 	uint8_t  ranging_method;
