@@ -44,6 +44,7 @@
 
 #include "at86rf233.h"
 #include "../distance-sensor.h"
+#include "fft/ffft.h"
 
 #include "radio/rf230bb/hal.h"
 #include "dev/radio.h"
@@ -59,9 +60,11 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <avr/pgmspace.h>
+#include <avr/wdt.h>
 
 #include <stdio.h>
 #include <string.h>
+#include <stdfix.h>
 
 #define PMU_MINIMUM_FREQUENCY 2322		// minimum frequency from AT86RF233 data sheet
 #define PMU_MAXIMUM_FREQUENCY 2527		// maximum frequency from AT86RF233 data sheet (maybe 2543.5 MHz will work)
@@ -977,6 +980,21 @@ static int8_t pmu_magic(uint8_t type) {
 }
 
 /*---------------------------------------------------------------------------*/
+void autocorr(int8_t* in, int16_t* out, uint16_t length) {
+	uint16_t i;
+	for (i = 0; i < length; i++) { // for every output data element
+		wdt_reset();
+		int64_t fieldval = 0;
+		uint16_t j;
+		for (j = i; j < length; j++) { // for every remaining element in the input data
+			int16_t x = (int16_t)in[j-i];
+			int16_t y = (int16_t)in[j];
+			fieldval += (x * y);
+		}
+		out[i] = fieldval / length; // fieldval must fit into int16_t
+	}
+}
+/*---------------------------------------------------------------------------*/
 /* This process manages a range measurement.
  * It is run at the initiator node and ensures that the measurement runs
  * asynchronously while the user process that started the ranging can do other tasks.
@@ -1017,10 +1035,83 @@ PROCESS_THREAD(ranging_process, ev, data)
 	statemachine(RANGE_REQUEST_START, &reqframe);
 
 	while (fsm_state != IDLE) {
-		PROCESS_PAUSE();
+		// TODO: use event to avoid busy waiting
+		PROCESS_PAUSE(); // wait while measurement is running
 	}
 
-	// TODO: start calculation of distance
+	// start calculation of distance
+	static uint16_t j; // 16 bit counter for loops
+
+	// calculate average value
+	static int8_t pmu_values[PMU_MEASUREMENTS];
+	for (j = 0; j < PMU_MEASUREMENTS; j++) {
+		int16_t v;
+		v  = local_pmu_values[j*4+0]-remote_pmu_values[j*4+0];
+		v += local_pmu_values[j*4+1]-remote_pmu_values[j*4+1];
+		v += local_pmu_values[j*4+2]-remote_pmu_values[j*4+2];
+		v += local_pmu_values[j*4+3]-remote_pmu_values[j*4+3];
+
+		v /= 4;
+
+		if (v > 127) {
+			v -= 256;
+		} else if (v < -128) {
+			v += 256;
+		}
+
+		pmu_values[j] = (int8_t)v; // lets hope the compiler does this in a good way...
+		//printf("pmu_values: %d\n", v);
+	}
+	PROCESS_PAUSE();
+
+
+	// calculate autocorrelation
+#if FFT_N < PMU_MEASUREMENTS
+	#error FFT size too small!
+#endif
+	static int16_t autocorr_values[FFT_N];
+	autocorr(pmu_values, autocorr_values, PMU_MEASUREMENTS);
+	PROCESS_PAUSE();
+
+	// fill rest of window with zeroes
+	for (j = PMU_MEASUREMENTS; j < FFT_N; j++) {
+		autocorr_values[j] = 0;
+	}
+	PROCESS_PAUSE();
+
+	for (j = 0; j < FFT_N; j++) {
+		//printf("autocorr: %d\n", autocorr_values[j]);
+	}
+
+	// run fft
+	static complex_t fft_buff[FFT_N];							// FTT buffer
+	static uint16_t* fft_result = (uint16_t*)autocorr_values;	// reuse buffer to save memory
+	fft_input(autocorr_values, fft_buff);
+	PROCESS_PAUSE();
+	fft_execute(fft_buff);
+	PROCESS_PAUSE();
+	fft_output(fft_buff, fft_result);
+	PROCESS_PAUSE();
+
+	// find peak in fft result
+	uint16_t peak_idx = 0;
+	uint16_t peak_val = 0;
+	for (j = 0; j < FFT_N/2; j++) {
+		if (peak_val < fft_result[j]) {
+			peak_val = fft_result[j];
+			peak_idx = j;
+		}
+		//printf("fft: %u\n", fft_result[j]);
+	}
+
+	printf("peak_idx: %u\n", peak_idx);
+
+	// calculate distance from peak
+	accum dist = (77.515678989k / (FFT_N) / (FFT_N) * peak_idx * peak_idx + 132.76889372k / (FFT_N) * peak_idx - 0.59048228802k);
+	printf("distance: %f\n", (float)dist);
+
+
+	// check if measurement was successful
 
 	PROCESS_END();
 }
