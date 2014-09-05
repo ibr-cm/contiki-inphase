@@ -138,6 +138,7 @@ struct {
 	uint8_t allow_ranging;
 	uint8_t compute;
 	uint8_t interpolate;
+	uint16_t offset;
 } settings;
 
 // allocate an array for the measurement results
@@ -192,6 +193,7 @@ uint8_t at86rf233_init(void) {
 	settings.allow_ranging = 0; // ranging is disabled by default
 	settings.compute = 1; 		// computation is enabled by default
 	settings.interpolate = 1;   // interpolation is enabled by default
+	settings.offset = 0;        // no offset by default
 
 	return 0; // sensor successfully initialized
 }
@@ -284,6 +286,12 @@ uint8_t at86rf233_set_interpolate(uint8_t interpolate) {
 	}
 	return 0;
 }
+
+uint8_t at86rf233_set_offset(uint16_t offset) {
+	settings.offset = offset;
+	return 0;
+}
+
 // this gets call from the timeout_timer when it expires
 static void reset_statemachine() {
 	fsm_state = IDLE;
@@ -1325,6 +1333,11 @@ PROCESS_THREAD(ranging_process, ev, data)
 			dist = D_PER_BIN * peak_pos_interp;
 		} else {
 			dist = D_PER_BIN * peak_pos;
+		}
+
+		if (settings.offset > 0) {
+			// subtract offset of configured
+			dist -= (settings.offset / 1000.0); // offset is given in millimeters
 		}
 
 		// check if measurement was successful

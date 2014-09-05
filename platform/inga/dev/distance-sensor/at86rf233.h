@@ -159,6 +159,8 @@ uint8_t at86rf233_set_compute(uint8_t compute);
 
 uint8_t at86rf233_set_interpolate(uint8_t interpolate);
 
+uint8_t at86rf233_set_offset(uint16_t offset);
+
 /**
  * \brief coap_input
  *        this function must be called by the network convergence layer for all incoming packages

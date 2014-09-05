@@ -77,6 +77,8 @@ extern const struct sensors_sensor distance_sensor;
 #define DISTANCE_COMPUTE       4
 // use interpolation for distance computation (slower but more accurate)
 #define DISTANCE_INTERPOLATE   5
+// subtract this offset (in millimeters) from the computed distance (to take care of hardware offsets)
+#define DISTANCE_OFFSET        6
 
 // Status codes for SENSORS_READY
 #define DISTANCE_INVALID      0

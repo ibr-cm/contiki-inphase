@@ -132,6 +132,10 @@ configure(int type, int c)
       at86rf233_set_interpolate(c);
       return 0;
 
+    case DISTANCE_OFFSET:
+      at86rf233_set_offset(c);
+      return 0;
+
   }
   return 0;
 }
