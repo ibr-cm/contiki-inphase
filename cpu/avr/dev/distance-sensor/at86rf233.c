@@ -512,6 +512,7 @@ void at86rf233_pmuMagicInitiator() {
 
 	// TODO: maybe add a function to HAL that writes only zeros to FB to save memory?
 	uint8_t fb_data[127] = {0};					// setup a framebuffer with all zeroes
+	// TODO: setting the FB to zeros does not seem toimpact the measurement, maybe remove it completely?
 	hal_frame_write(fb_data, 127);				// copy data to sram, framebuffer section
 
 	// antenna diversity control is skipped, we only have one antenna
@@ -611,6 +612,7 @@ void at86rf233_pmuMagicReflector() {
 
 	// TODO: maybe add a function to HAL that writes only zeros to FB to save memory?
 	uint8_t fb_data[127] = {0};					// setup a framebuffer with all zeroes
+	// TODO: setting the FB to zeros does not seem toimpact the measurement, maybe remove it completely?
 	hal_frame_write(fb_data, 127);				// copy data to sram, framebuffer section
 
 	// antenna diversity control is skipped, we only have one antenna
