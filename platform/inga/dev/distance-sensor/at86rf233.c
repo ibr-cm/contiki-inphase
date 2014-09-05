@@ -83,11 +83,12 @@
 
 // configuration of signaling on the LEDs
 // LEDs can be disabled to enabled measurement of power consumption
+#ifndef PMU_GREEN_LED
 #define PMU_GREEN_LED	(PMU_LED_ON_WHILE_RANGING | PMU_LED_ON_WHILE_CALC)
-//#define PMU_YELLOW_LED	PMU_LED_ON_WHILE_PMU_READ
-
-//#define PMU_GREEN_LED	PMU_LED_NONE
-#define PMU_YELLOW_LED	PMU_LED_NONE
+#endif
+#ifndef PMU_YELLOW_LED
+#define PMU_YELLOW_LED	PMU_LED_TIMER_TOGGLE
+#endif
 
 // possibilities to display on LEDs
 #define PMU_LED_NONE				0	// do not change LEDs
