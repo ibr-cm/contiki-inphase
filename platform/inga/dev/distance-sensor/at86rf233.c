@@ -99,9 +99,8 @@
 #define PMU_LED_ENABLE_ON_ERROR		16	// turn LED on on error, disable it on next measurement
 #define PMU_LED_ON_WHILE_PMU_READ	32	// turn LED on while the PMU values are read
 
-#define RANGE_REQUEST_RETRANSMISSIONS  0
-#define RANGE_ACCEPT_RETRANSMISSIONS   0
-#define RESULT_REQUEST_RETRANSMISSIONS 0
+#define RANGE_REQUEST_RETRANSMISSIONS  2
+#define RESULT_REQUEST_RETRANSMISSIONS 2
 
 #define AT86RF233_ENTER_CRITICAL_REGION( ) {uint8_t volatile saved_sreg = SREG; cli( )
 #define AT86RF233_LEAVE_CRITICAL_REGION( ) SREG = saved_sreg;}
@@ -147,8 +146,8 @@ struct {
 uint8_t local_pmu_values[PMU_VALUES_LEN];
 int8_t* signed_local_pmu_values = (int8_t*)local_pmu_values;	// reuse buffer to save memory
 
-#define MESSAGE_TIMEOUT (0.1 * CLOCK_SECOND)
-#define RESULT_REQUEST_TIMEOUT (0.5 * CLOCK_SECOND)
+#define REQUEST_TIMEOUT (0.05 * CLOCK_SECOND)
+#define REFLECTOR_TIMEOUT (0.2 * CLOCK_SECOND)
 struct ctimer timeout_timer;  	// if this timer runs out, the measurement has
 								// failed due to a timeout in the network
 
@@ -396,7 +395,7 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 			status_code = DISTANCE_RUNNING;
 			send_range_request();
 			retransmissions = RANGE_REQUEST_RETRANSMISSIONS; // maximum allowed retransmissions
-			ctimer_set(&timeout_timer, MESSAGE_TIMEOUT, trigger_network_timeout, NULL);
+			ctimer_set(&timeout_timer, REQUEST_TIMEOUT, trigger_network_timeout, NULL);
 			fsm_state = RANGING_REQUESTED;
 		} else if (frame_type == RANGE_REQUEST) {
 			// check if ranging is allowed
@@ -406,8 +405,8 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 			} else {
 				status_code = DISTANCE_RUNNING;
 				send_range_accept();
-				retransmissions = RANGE_ACCEPT_RETRANSMISSIONS; // maximum allowed retransmissions
-				ctimer_set(&timeout_timer, MESSAGE_TIMEOUT, trigger_network_timeout, NULL);
+				next_status_code = DISTANCE_TIMEOUT;
+				ctimer_set(&timeout_timer, REFLECTOR_TIMEOUT, reset_statemachine, NULL);
 				fsm_state = RANGING_ACCEPTED;
 			}
 		} else {
@@ -422,9 +421,10 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 	{
 		if (frame_type == NETWORK_TIMEOUT) {
 			if (retransmissions > 0) {
+				PRINTF("retransmit RANGE_REQUEST\n");
 				send_range_request();
 				retransmissions--;
-				ctimer_set(&timeout_timer, MESSAGE_TIMEOUT, trigger_network_timeout, NULL);
+				ctimer_set(&timeout_timer, REQUEST_TIMEOUT, trigger_network_timeout, NULL);
 			} else {
 				// too many retransmissions, abort ranging
 				next_status_code = DISTANCE_NO_REFLECTOR;
@@ -445,7 +445,7 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 				next_result_start = 0;
 				send_result_request(next_result_start);
 				retransmissions = RESULT_REQUEST_RETRANSMISSIONS; // maximum allowed retransmissions
-				ctimer_set(&timeout_timer, MESSAGE_TIMEOUT, trigger_network_timeout, NULL);
+				ctimer_set(&timeout_timer, REQUEST_TIMEOUT, trigger_network_timeout, NULL);
 				fsm_state = RESULT_REQUESTED;
 			}
 		} else {
@@ -457,9 +457,10 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 	{
 		if (frame_type == NETWORK_TIMEOUT) {
 			if (retransmissions > 0) {
+				PRINTF("retransmit RESULT_REQUEST\n");
 				send_result_request(next_result_start);
 				retransmissions--;
-				ctimer_set(&timeout_timer, MESSAGE_TIMEOUT, trigger_network_timeout, NULL);
+				ctimer_set(&timeout_timer, REQUEST_TIMEOUT, trigger_network_timeout, NULL);
 			} else {
 				// too many retransmissions, abort ranging
 				next_status_code = DISTANCE_TIMEOUT;
@@ -481,7 +482,7 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 
 			if (next_result_start < PMU_MEASUREMENTS) {
 				// more data to receive
-				ctimer_set(&timeout_timer, MESSAGE_TIMEOUT, trigger_network_timeout, NULL);
+				ctimer_set(&timeout_timer, REQUEST_TIMEOUT, trigger_network_timeout, NULL);
 				fsm_state = RESULT_REQUESTED;
 			} else {
 				// got all results, finished
@@ -496,16 +497,13 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 	// reflector states
 	case RANGING_ACCEPTED:
 	{
-		if (frame_type == NETWORK_TIMEOUT) {
-			if (retransmissions > 0) {
-				send_range_accept();
-				retransmissions--;
-				ctimer_set(&timeout_timer, MESSAGE_TIMEOUT, trigger_network_timeout, NULL);
-			} else {
-				// too many retransmissions, abort ranging
-				next_status_code = DISTANCE_TIMEOUT;
-				reset_statemachine();
-			}
+		if (frame_type == RANGE_REQUEST) {
+			PRINTF("got duplicate RANGE_REQUEST, answering anyway...\n");
+			status_code = DISTANCE_RUNNING;
+			send_range_accept();
+			next_status_code = DISTANCE_TIMEOUT;
+			ctimer_set(&timeout_timer, REQUEST_TIMEOUT, reset_statemachine, NULL);
+			fsm_state = RANGING_ACCEPTED;
 		} else if (frame_type == TIME_SYNC_REQUEST) {
 			ctimer_stop(&timeout_timer); // stop timer for pmu_magic
 
@@ -515,7 +513,7 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 				reset_statemachine(); // DIG2 timed out, abort!
 			} else {
 				next_status_code = DISTANCE_TIMEOUT;
-				ctimer_set(&timeout_timer, RESULT_REQUEST_TIMEOUT, reset_statemachine, NULL); // magic finished, restart timer
+				ctimer_set(&timeout_timer, REFLECTOR_TIMEOUT, reset_statemachine, NULL); // magic finished, restart timer
 				fsm_state = WAIT_FOR_RESULT_REQ;
 			}
 		} else {
@@ -547,7 +545,7 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 
 					send_result_confirm(start_address, result_length);
 
-					// keep using RESULT_REQUEST_TIMEOUT, because initiator might take longer time to process results
+					// keep using REFLECTOR_TIMEOUT, because initiator might take longer time to process results
 					ctimer_restart(&timeout_timer); // partner sent valid next frame, reset timer
 
 					fsm_state = WAIT_FOR_RESULT_REQ; // wait for more result requests
@@ -567,10 +565,11 @@ static void statemachine(uint8_t frame_type, frame_subframe_t *frame) {
 				PRINTF("DISTANCE: ranging request ignored (ranging not allowed)\n");
 				fsm_state = IDLE;
 			} else {
+				PRINTF("returning early from WAIT_FOR_RESULT_REQ, got new RANGE_REQUEST\n");
 				status_code = DISTANCE_RUNNING;
 				send_range_accept();
-				retransmissions = RANGE_ACCEPT_RETRANSMISSIONS; // maximum allowed retransmissions
-				ctimer_set(&timeout_timer, MESSAGE_TIMEOUT, trigger_network_timeout, NULL);
+				next_status_code = DISTANCE_TIMEOUT;
+				ctimer_set(&timeout_timer, REFLECTOR_TIMEOUT, reset_statemachine, NULL);
 				fsm_state = RANGING_ACCEPTED;
 			}
 		} else {
