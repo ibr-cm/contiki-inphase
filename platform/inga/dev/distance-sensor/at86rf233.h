@@ -86,9 +86,6 @@
 
 typedef struct {
 	uint8_t  ranging_method;
-	uint16_t f_start[DISTANCE_FREQUENCY_BANDS];
-	uint16_t f_stop[DISTANCE_FREQUENCY_BANDS];
-	uint8_t  f_step;
 	uint8_t  capabilities;
 } frame_range_request_t;
 
@@ -141,10 +138,6 @@ uint8_t at86rf233_get_quality();
 uint8_t at86rf233_start_ranging(void);
 
 uint8_t at86rf233_set_target(linkaddr_t* addr);
-
-int8_t at86rf233_set_frequencies(frequency_bands_t *f);
-
-uint8_t at86rf233_set_fstep(uint8_t fstep);
 
 uint8_t at86rf233_set_raw_output(uint8_t raw);
 

@@ -71,7 +71,6 @@
 #define PMU_SAMPLES 4					// number of samples that are taken for each frequency by both nodes
 #define PMU_SAMPLES_SHIFT 2				// bitshift to substitute the division by the PMU_SAMPLES
 #define PMU_MEASUREMENTS 200			// number of frequencies to measure
-#define PMU_STEP 1						// frequency step for measurement
 
 // calibration values for quadratic
 #define PMU_CALIB_X2 77.515678989k		// quadratic part
@@ -123,9 +122,6 @@ uint8_t dist_last_quality = 0;
 struct {
 	linkaddr_t reflector;						// address of the reflector
 	linkaddr_t initiator;						// address of the initiator that issued the current measurement
-	uint16_t f_start[DISTANCE_FREQUENCY_BANDS];	// frequency bands to measure
-	uint16_t f_stop[DISTANCE_FREQUENCY_BANDS];  // data sheet says 2322 - 2527 MHz (it seems up to 2543 MHz will work)
-	uint8_t f_step;								// frequency step in MHz, 0 = 500 kHz
 	uint8_t raw_output;							// if 1, output PMU data to serial port
 } settings;
 
@@ -170,14 +166,6 @@ uint8_t at86rf233_init(void) {
 	linkaddr_copy(&settings.initiator, &linkaddr_null); // invalidate initiator_requested address
 
 	// TODO: init some fool proof settings here that measure rather okayish...
-
-	// init frequency bands
-	uint8_t i;
-	for (i = 0; i < DISTANCE_FREQUENCY_BANDS; i++) {
-		settings.f_start[i] = 0;
-		settings.f_stop[i] = 0;
-	}
-	settings.f_step = 1;
 
 	settings.raw_output = 0;
 
@@ -232,117 +220,6 @@ uint8_t at86rf233_set_target(linkaddr_t *addr) {
 	return 1;
 }
 
-int8_t at86rf233_set_frequencies(frequency_bands_t *f) {
-	// check frequency bands
-
-	uint8_t i;
-	// check if all frequencies are in the defined range
-	for (i = 0; i < DISTANCE_FREQUENCY_BANDS; i++) {
-		if (f->f_start[i] == 0) {	// 0 is allowed
-			continue;
-		}
-		if (f->f_stop[i] == 0) {	// 0 is allowed
-			continue;
-		}
-
-		if (f->f_start[i] < PMU_MINIMUM_FREQUENCY) {
-			PRINTF("DISTANCE: frequency failed[%d]: 1\n", i);
-			return 1; // error!
-		}
-
-		if (f->f_start[i] > PMU_MAXIMUM_FREQUENCY) {
-			PRINTF("DISTANCE: frequency failed[%d]: 2\n", i);
-			return 1; // error!
-		}
-
-		if (f->f_stop[i] < PMU_MINIMUM_FREQUENCY) {
-			PRINTF("DISTANCE: frequency failed[%d]: 3\n", i);
-			return 1; // error!
-		}
-
-		if (f->f_stop[i] > PMU_MAXIMUM_FREQUENCY) {
-			PRINTF("DISTANCE: frequency failed[%d]: 4\n", i);
-			return 1; // error!
-		}
-	}
-
-
-	// first frequency band can never be 0
-	if (f->f_start[0] == 0) {
-		PRINTF("DISTANCE: frequency failed[%d]: 5\n", 0);
-		return 1; // error!
-	}
-	if (f->f_stop[0] == 0) {
-		PRINTF("DISTANCE: frequency failed[%d]: 6\n", 0);
-		return 1; // error!
-	}
-
-	// it is allowed that frequency bands are 0 but all following ones must be 0 too
-	uint8_t zero_detected = 0;
-	for (i = 1; i < DISTANCE_FREQUENCY_BANDS; i++) {
-		if (zero_detected) { // everything must be 0 now
-			if (f->f_start[i]) {
-				PRINTF("DISTANCE: frequency failed[%d]: 7\n", i);
-				return 1; // error!
-			}
-			if (f->f_stop[i]) {
-				PRINTF("DISTANCE: frequency failed[%d]: 8\n", i);
-				return 1; // error!
-			}
-		} else {			// find first 0
-			if (f->f_start[i] == 0) {
-				zero_detected = 1;
-				if (f->f_stop[i]) {
-					PRINTF("DISTANCE: frequency failed[%d]: 9\n", i);
-					return 1; // error!
-				}
-			}
-		}
-	}
-
-	// every start of a frequency band must be greater than the end of the last one
-	for (i = 1; i < DISTANCE_FREQUENCY_BANDS; i++) {
-		if (f->f_start[i] == 0) {
-			break;
-		}
-		if (f->f_stop[i-1] > f->f_start[i]) {
-			PRINTF("DISTANCE: frequency failed[%d]: 10\n", i);
-			return 1; // error!
-		}
-	}
-
-	// every stop must be greater or equal to the start frequency
-	for (i = 0; i < DISTANCE_FREQUENCY_BANDS; i++) {
-		if (f->f_start[i] == 0) {
-			break;
-		}
-		if (f->f_stop[i] < f->f_start[i]) {
-			PRINTF("DISTANCE: frequency failed[%d]: 11\n", i);
-			return 1; // error!
-		}
-	}
-
-	// well done, the frequency settings are valid!
-
-	// copy frequency bands
-	for (i = 0; i < DISTANCE_FREQUENCY_BANDS; i++) {
-		settings.f_start[i] = f->f_start[i];
-		settings.f_stop[i] = f->f_stop[i];
-
-		PRINTF("DISTANCE: settings.f_start[%d]: %d, settings.f_stop[%d]: %d\n",
-				i, settings.f_start[i], i, settings.f_stop[i]);
-	}
-	return 0;
-}
-
-uint8_t at86rf233_set_fstep(uint8_t fstep) {
-	// TODO: check if steps are valid and return error
-	// return 0 on error
-	settings.f_step = fstep;
-	PRINTF("DISTANCE: settings.f_step: %d\n", settings.f_step);
-	return 1;
-}
-
 uint8_t at86rf233_set_raw_output(uint8_t raw) {
 	if (raw > 0) {
 		settings.raw_output = 1;
@@ -375,17 +252,13 @@ static void send_serial(void) {
     binary_send_byte(1); // only one sample is transmitted it is already averaged
 
     // send step size
-    binary_send_byte(PMU_STEP);
+    binary_send_byte(0); // 0 is parsed as 500 kHz
 
-    // send number of frequency blocks
-    binary_send_byte(DISTANCE_FREQUENCY_BANDS);
+	// send start frequency
+	binary_send_short(PMU_START_FREQUENCY);
 
-	// send frequency bands
-	uint8_t i;
-	for (i = 0; i < DISTANCE_FREQUENCY_BANDS; i++) {
-		binary_send_short(settings.f_start[i]);
-		binary_send_short(settings.f_stop[i]);
-	}
+	// send total amount of samples
+	binary_send_short(PMU_MEASUREMENTS);
 
     uint16_t j;
     for (j = 0; j < PMU_MEASUREMENTS; j++)
@@ -1026,7 +899,7 @@ static int8_t pmu_magic(uint8_t type) {
 			uint8_t f, f_full, f_half;
 			switch (type) {
 			case 0:		// initiator
-				f = (i * PMU_STEP);
+				f = i;
 				f_full = f >> 1;
 				f_half = f & 0x01;
 				setFrequency(PMU_START_FREQUENCY + f_full, f_half);
@@ -1034,7 +907,7 @@ static int8_t pmu_magic(uint8_t type) {
 				sender_pmu();
 				break;
 			default:	// reflector
-				f = (i * PMU_STEP) + 1; // reflector is 500 kHz higher
+				f = i + 1; // reflector is 500 kHz higher
 				f_full = f >> 1;
 				f_half = f & 0x01;
 				setFrequency(PMU_START_FREQUENCY + f_full, f_half);
@@ -1123,15 +996,6 @@ PROCESS_THREAD(ranging_process, ev, data)
 	frame_subframe_t reqframe;
 
 	reqframe.range_request.ranging_method = RANGING_METHOD_PMU;
-
-	// copy frequency bands
-	uint8_t i;
-	for (i = 0; i < DISTANCE_FREQUENCY_BANDS; i++) {
-		reqframe.range_request.f_start[i] = settings.f_start[i];
-		reqframe.range_request.f_stop[i] = settings.f_stop[i];
-	}
-
-	reqframe.range_request.f_step = settings.f_step;
 	reqframe.range_request.capabilities = 0x00;
 
 	fsm_state = IDLE; // hard reset the statemachine, maybe it is stuck in some timed out measurement

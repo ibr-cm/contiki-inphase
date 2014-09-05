@@ -107,13 +107,6 @@ configure(int type, int c)
 		at86rf233_set_raw_output(c);
 		return 0;
 
-    case DISTANCE_FREQUENCIES:
-		return at86rf233_set_frequencies(c);
-
-    case DISTANCE_FREQ_STEP:
-		at86rf233_set_fstep(c);
-		return 0;
-
     case DISTANCE_START:
     	return at86rf233_start_ranging();
 

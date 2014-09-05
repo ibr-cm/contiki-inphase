@@ -55,13 +55,6 @@ extern const struct sensors_sensor distance_sensor;
 
 #define DISTANCE_SENSOR "Distance"
 
-#define DISTANCE_FREQUENCY_BANDS 5
-
-typedef struct {
-	uint16_t f_start[DISTANCE_FREQUENCY_BANDS];
-	uint16_t f_stop[DISTANCE_FREQUENCY_BANDS];
-} frequency_bands_t;
-
 // Values to read
 // this always reads data from the last successful measurement
 #define DISTANCE_LAST_DIST_METER        0
@@ -78,10 +71,6 @@ typedef struct {
 #define DISTANCE_ALLOW_RANGING 2
 // output raw measurement data on stdout at initiator node for post-processing
 #define DISTANCE_RAW_OUTPUT	   3
-
-#define DISTANCE_FREQUENCIES   4
-
-#define DISTANCE_FREQ_STEP     5
 
 // Status codes for SENSORS_READY
 #define DISTANCE_INVALID      0
