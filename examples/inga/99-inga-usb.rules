@@ -7,3 +7,5 @@ SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", ATTRS{produ
 KERNEL=="ttyUSB[0‐9]*", GROUP="plugdev"
 # assign to group plugdev
 SUBSYSTEM=="usb", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", GROUP="plugdev"
+# make ModemManager stop probing the INGA
+ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", ENV{ID_MM_DEVICE_IGNORE}="1"
