@@ -508,6 +508,10 @@ init(void)
   /* Initialize process subsystem */
   process_init();
 
+  /* start serial input process */
+  rs232_set_input(RS232_PORT_0, serial_line_input_byte);
+  serial_line_init();
+
   /* etimers must be started before ctimer_init */
   process_start(&etimer_process, NULL);
 
