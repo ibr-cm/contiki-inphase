@@ -77,6 +77,7 @@ uint8_t debugflowsize, debugflow[DEBUGFLOWSIZE];
 #include "dev/pressure-sensor.h"
 #include "dev/battery-sensor.h"
 #include "dev/mag-sensor.h"
+#include "dev/distance-sensor.h"
 #include "dev/at45db.h"
 
 #include "ip/uip.h"
@@ -603,6 +604,7 @@ init(void)
   CHECK_SENSOR("Magnetometer", mag_sensor);
   CHECK_SENSOR("Pressure", pressure_sensor);
   CHECK_SENSOR("Battery", battery_sensor);
+  CHECK_SENSOR("Distance", distance_sensor);
 #endif /* INGA_BOOTSCREEN_SENSORS */
 
 #if INGA_BOOTSCREEN
@@ -722,7 +724,7 @@ periodic_prints(void)
 /*-------------------------------------------------------------------------*/
 
 // setup sensors
-SENSORS(&button_sensor, &acc_sensor, &gyro_sensor, &pressure_sensor, &battery_sensor, &mag_sensor);
+SENSORS(&button_sensor, &acc_sensor, &gyro_sensor, &pressure_sensor, &battery_sensor, &mag_sensor, &distance_sensor);
 
 int
 main(void)
