@@ -301,6 +301,7 @@ const struct radio_driver rf230_driver =
 
 uint8_t RF230_receive_on;
 static uint8_t channel;
+static uint16_t frequency;
 
 /* Received frames are buffered to rxframe in the interrupt routine in hal.c */
 uint8_t rxframe_head,rxframe_tail;
@@ -1263,6 +1264,42 @@ rf230_listen_channel(uint8_t c)
  /* Same as set channel but forces RX_ON state for sniffer or energy scan */
 //  PRINTF("rf230: Listen Channel %u\n",c);
   rf230_set_channel(c);
+  radio_set_trx_state(RX_ON);
+}
+/*---------------------------------------------------------------------------*/
+uint16_t
+rf230_get_frequency(void)
+{
+  return frequency;
+}
+/*---------------------------------------------------------------------------*/
+void
+rf230_set_frequency(uint16_t f)
+{
+  uint16_t full_mhz = f/10;
+  uint8_t half_mhz = f%10;
+  if (half_mhz != 5) {	// if something else than 500kHz spacing is selected set to full MHz
+    half_mhz = 0;
+  }
+  PRINTF("rf230: Set Frequency %u.%u MHz\n",full_mhz,half_mhz);
+  /* Wait for any transmission to end. */
+  rf230_waitidle();
+  frequency=full_mhz*10+half_mhz;
+
+  uint8_t cc_band = (frequency-14100)/1280+1; // select correct cc_band
+  uint8_t cc_number = (frequency-((cc_band-1)*1280+14100))/5;
+
+  PRINTF("rf230: CC_BAND: %x, CC_NUMBER: %x\n",cc_band, cc_number);
+
+  hal_register_write(0x13, cc_number);
+  hal_subregister_write(0x14, 0x0F, 0, cc_band);
+}
+/*---------------------------------------------------------------------------*/
+void
+rf230_listen_frequency(uint16_t f)
+{
+ /* Same as set channel but forces RX_ON state for sniffer or energy scan */
+  rf230_set_frequency(f);
   radio_set_trx_state(RX_ON);
 }
 /*---------------------------------------------------------------------------*/
